@@ -196,7 +196,7 @@ def data_points_page():
 
             asset_types = st.multiselect(
                 "Asset Type(s)",
-                ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor"],
+                ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor","UPS","WMS"],
                 default=json.loads(dp_to_edit['asset_types'] or '[]')
             )
 
