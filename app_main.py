@@ -5,6 +5,9 @@ import pandas as pd
 import json
 import datetime
 import random
+import io
+import openpyxl
+from openpyxl.styles import Font
 
 # --- DATABASE SETUP ---
 
@@ -15,12 +18,13 @@ def get_db_connection():
     return conn
 
 def init_db():
-    """Initializes the database and creates the table if it doesn't exist."""
+    """Initializes the database and creates the tables if they don't exist."""
     conn = get_db_connection()
+    # Create data_points table
     conn.execute('''
         CREATE TABLE IF NOT EXISTS data_points (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
+            name TEXT NOT NULL UNIQUE,
             identifiers TEXT,
             asset_types TEXT,
             data_type TEXT NOT NULL,
@@ -28,8 +32,45 @@ def init_db():
             range_max REAL
         )
     ''')
+    # Create asset_types table
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS asset_types (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE
+        )
+    ''')
+    # Check if the asset_types table is empty and populate it with defaults
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM asset_types")
+    if cursor.fetchone()[0] == 0:
+        default_types = ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor"]
+        for asset_type in default_types:
+            conn.execute("INSERT INTO asset_types (name) VALUES (?)", (asset_type,))
+    
     conn.commit()
     conn.close()
+
+def add_asset_type(name):
+    """Adds a new asset type to the database, checking for uniqueness (case-insensitive)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Case-insensitive check for uniqueness
+    cursor.execute("SELECT id FROM asset_types WHERE LOWER(name) = ?", (name.lower(),))
+    if cursor.fetchone():
+        conn.close()
+        return False # Indicates duplicate
+    
+    cursor.execute("INSERT INTO asset_types (name) VALUES (?)", (name,))
+    conn.commit()
+    conn.close()
+    return True # Indicates success
+
+def get_all_asset_types():
+    """Fetches all asset type names from the database."""
+    conn = get_db_connection()
+    types = conn.execute('SELECT name FROM asset_types ORDER BY name ASC').fetchall()
+    conn.close()
+    return [row['name'] for row in types]
 
 def add_data_point(name, identifiers, asset_types, data_type, range_min, range_max):
     """Adds a new data point to the database."""
@@ -41,12 +82,12 @@ def add_data_point(name, identifiers, asset_types, data_type, range_min, range_m
     conn.commit()
     conn.close()
 
-def update_data_point(dp_id, name, identifiers, asset_types, data_type, range_min, range_max):
-    """Updates an existing data point in the database."""
+def update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max):
+    """Updates an existing data point in the database, identified by its name."""
     conn = get_db_connection()
     conn.execute(
-        'UPDATE data_points SET name = ?, identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ? WHERE id = ?',
-        (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, dp_id)
+        'UPDATE data_points SET identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ? WHERE name = ?',
+        (json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, name)
     )
     conn.commit()
     conn.close()
@@ -146,7 +187,65 @@ def format_timestamp(dt_object):
     tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
     dt_aware = dt_object.replace(tzinfo=tz)
     # Format to ISO 8601 with timezone
-    return dt_aware.strftime('%Y-%m-%dT%H:%M:%S%z')
+    iso_str = dt_aware.strftime('%Y-%m-%dT%H:%M:%S%z')
+    return iso_str
+
+
+# --- BULK UPLOAD FUNCTIONS ---
+def create_sample_excel():
+    """Creates an in-memory Excel file with sample data for bulk upload."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "DataPoints"
+    
+    headers = ["name", "identifiers", "asset_types", "data_type", "range_min", "range_max"]
+    sheet.append(headers)
+    
+    # Style headers
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+        
+    # Add sample data
+    sample_data = [
+        "Building Power", "bldg_pwr, main_kw", "Sub-Meter, HVAC", "float", 0, 5000
+    ]
+    sheet.append(sample_data)
+    
+    # Save to a virtual file
+    virtual_workbook = io.BytesIO()
+    workbook.save(virtual_workbook)
+    virtual_workbook.seek(0)
+    return virtual_workbook.getvalue()
+
+def validate_bulk_upload(df):
+    """Validates the DataFrame from the uploaded Excel file."""
+    errors = []
+    required_columns = ["name", "identifiers", "asset_types", "data_type"]
+    valid_data_types = ["float", "boolean", "string"]
+    available_asset_types = get_all_asset_types()
+    
+    for col in required_columns:
+        if col not in df.columns:
+            errors.append(f"Missing required column: '{col}'")
+            return errors, None # Stop validation if columns are missing
+
+    # Check for empty required fields
+    for i, row in df.iterrows():
+        for col in required_columns:
+            if pd.isna(row[col]):
+                errors.append(f"Row {i+2}: Missing value in required column '{col}'.")
+        
+        # Validate data_type
+        if row['data_type'] not in valid_data_types:
+            errors.append(f"Row {i+2}: Invalid data_type '{row['data_type']}'. Must be one of {valid_data_types}.")
+            
+        # Validate asset_types
+        asset_types = [atype.strip() for atype in str(row['asset_types']).split(',')]
+        for atype in asset_types:
+            if atype not in available_asset_types:
+                errors.append(f"Row {i+2}: Asset type '{atype}' is not valid. Available types are: {available_asset_types}.")
+
+    return errors, df
 
 
 # --- UI PAGES ---
@@ -165,6 +264,69 @@ def data_points_page():
     st.title("Data Points")
     st.header("Data Points Management")
 
+    # --- MANAGE ASSET TYPES ---
+    with st.expander("Manage Asset Types"):
+        with st.form("new_asset_type_form", clear_on_submit=True):
+            new_asset_name = st.text_input("New Asset Type Name")
+            submitted = st.form_submit_button("Add Asset Type")
+            if submitted and new_asset_name:
+                if add_asset_type(new_asset_name):
+                    st.success(f"Asset type '{new_asset_name}' added successfully!")
+                    st.rerun() # Rerun to update dropdowns
+                else:
+                    st.error(f"Asset type '{new_asset_name}' already exists (case-insensitive).")
+
+    # --- BULK UPLOAD ---
+    with st.expander("Bulk Add/Update Data Points"):
+        st.download_button(
+            label="Download Sample .xlsx File",
+            data=create_sample_excel(),
+            file_name="sample_data_points.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+        uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx"])
+        
+        if uploaded_file is not None:
+            try:
+                df = pd.read_excel(uploaded_file)
+                errors, validated_df = validate_bulk_upload(df)
+                
+                if errors:
+                    st.error("Validation failed. Please fix the following errors in your file:")
+                    for error in errors:
+                        st.write(f"- {error}")
+                else:
+                    st.success("File validation successful! Processing records...")
+                    # Get existing data point names for update/add logic
+                    existing_points_df, _ = get_all_data_points()
+                    existing_names = [row['name'] for row in existing_points_df]
+
+                    for i, row in validated_df.iterrows():
+                        name = row['name']
+                        identifiers = [iden.strip() for iden in str(row['identifiers']).split(',')]
+                        asset_types = [atype.strip() for atype in str(row['asset_types']).split(',')]
+                        data_type = row['data_type']
+                        range_min = row.get('range_min') if pd.notna(row.get('range_min')) else None
+                        range_max = row.get('range_max') if pd.notna(row.get('range_max')) else None
+
+                        if name in existing_names:
+                            # Update existing data point
+                            update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max)
+                        else:
+                            # Add new data point
+                            add_data_point(name, identifiers, asset_types, data_type, range_min, range_max)
+                    
+                    st.success("Bulk upload complete!")
+                    st.rerun()
+
+            except Exception as e:
+                st.error(f"An error occurred while processing the file: {e}")
+
+
+    # Fetch asset types dynamically for dropdowns
+    asset_type_options = get_all_asset_types()
+
     # --- STATE MANAGEMENT ---
     if "show_add_form" not in st.session_state:
         st.session_state.show_add_form = False
@@ -178,10 +340,8 @@ def data_points_page():
         with st.form("edit_data_point_form"):
             st.subheader(f"Editing Data Point: {dp_to_edit['name']}")
             
-            dp_name = st.text_input("Data Point Name", value=dp_to_edit['name'])
-            
+            dp_name = st.text_input("Data Point Name", value=dp_to_edit['name'], disabled=True) # Name is the key, so disable editing
             dp_identifiers_str = st.text_input("Identifiers (comma-separated)", value=format_json_list_for_display(dp_to_edit['identifiers']))
-            
             data_type_options = ["float", "boolean", "string"]
             data_type_index = data_type_options.index(dp_to_edit['data_type']) if dp_to_edit['data_type'] in data_type_options else 0
             data_type = st.selectbox("Data Type", data_type_options, index=data_type_index)
@@ -196,8 +356,8 @@ def data_points_page():
 
             asset_types = st.multiselect(
                 "Asset Type(s)",
-                ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor","UPS","WMS"],
-                default=json.loads(dp_to_edit['asset_types'] or '[]')
+                asset_type_options, # Use dynamic list
+                default=[atype for atype in json.loads(dp_to_edit['asset_types'] or '[]') if atype in asset_type_options]
             )
 
             col_submit, col_cancel = st.columns(2)
@@ -237,7 +397,7 @@ def data_points_page():
                 with col2:
                     range_max = st.number_input("Range Max", value=100.0, format="%.2f")
 
-            asset_types = st.multiselect("Asset Type(s)", ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor"])
+            asset_types = st.multiselect("Asset Type(s)", asset_type_options) # Use dynamic list
 
             col_submit, col_cancel = st.columns(2)
             with col_submit:
@@ -274,24 +434,19 @@ def data_points_page():
     if not all_points:
         st.info("No data points found. Click 'Add New Data Point' to get started.")
     else:
-        # Create a header row for the custom table
         header_cols = st.columns([3, 3, 3, 2, 2, 1])
         headers = ["Data Point Name", "Identifiers", "Asset Types", "Data Type", "Range", "Actions"]
         for col, header in zip(header_cols, headers):
             col.markdown(f"**{header}**")
         
-        # Display each data point as a row with columns
         for point in all_points:
             row_cols = st.columns([3, 3, 3, 2, 2, 1])
-            
             row_cols[0].write(point['name'])
             row_cols[1].write(format_json_list_for_display(point['identifiers']))
             row_cols[2].write(format_json_list_for_display(point['asset_types']))
             row_cols[3].write(point['data_type'])
-            
             range_str = f"{point['range_min']} - {point['range_max']}" if point['data_type'] == 'float' else 'N/A'
             row_cols[4].write(range_str)
-            
             with row_cols[5]:
                 if st.button("✏️", key=f"edit_{point['id']}", use_container_width=True):
                     st.session_state.editing_dp_id = point['id']
@@ -304,12 +459,15 @@ def generator_page():
     st.title("Sample Data Generator")
     st.header("Generate Mock JSON Data")
 
+    # Fetch asset types dynamically
+    asset_type_options = get_all_asset_types()
+    if not asset_type_options:
+        st.warning("No asset types found. Please add one on the 'Data points' page first.")
+        return
+
     with st.form("generator_form"):
         st.subheader("Generation Parameters")
-
-        asset_type_options = ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor"]
         selected_asset_type = st.selectbox("Select Asset Type", asset_type_options)
-
         pld_id = st.text_input("Enter a unique PLD ID", placeholder="e.g., PLD-001")
 
         col1, col2 = st.columns(2)
@@ -338,16 +496,13 @@ def generator_page():
             if not matching_dps:
                 st.warning(f"No data points found for asset type '{selected_asset_type}'. Please add them on the 'Data points' page.")
             else:
-                # Combine date and time
                 start_datetime = datetime.datetime.combine(start_date, start_time)
                 end_datetime = datetime.datetime.combine(end_date, end_time)
 
-                # Generate a list of full JSON packets
                 all_packets = []
                 current_time = start_datetime
                 seq_id = 1
                 while current_time <= end_datetime:
-                    # Create the inner data payload for this specific timestamp
                     sii_data = {
                         "tmsp": format_timestamp(current_time),
                         "evc": 300,
@@ -357,7 +512,6 @@ def generator_page():
                         key = (json.loads(dp['identifiers'])[0] if dp['identifiers'] and json.loads(dp['identifiers']) else dp['name'].replace(" ", "_").lower())
                         sii_data[key] = generate_mock_value(dp)
 
-                    # Assemble the complete JSON structure for this single packet
                     single_packet_json = {
                         "ver": "1.0",
                         "pld": pld_id,
@@ -371,14 +525,7 @@ def generator_page():
                         "evc": "300",
                         "seqid": seq_id,
                         "alt": None,
-                        "ext": [
-                            {
-                                "ver": "3.0",
-                                "sii": {
-                                    "1": sii_data
-                                }
-                            }
-                        ]
+                        "ext": [{"ver": "3.0", "sii": {"1": sii_data}}]
                     }
                     all_packets.append(single_packet_json)
                     
@@ -389,11 +536,8 @@ def generator_page():
                     st.warning("No packets were generated for the selected time range.")
                 else:
                     st.success(f"Successfully generated {len(all_packets)} packets!")
-                    
                     st.subheader("Generated JSON Preview (First Packet)")
                     st.json(all_packets[0])
-
-                    # Provide download button for the list of packets
                     json_string = json.dumps(all_packets, indent=4)
                     st.download_button(
                         label="Download JSON File",
@@ -401,7 +545,6 @@ def generator_page():
                         mime="application/json",
                         data=json_string,
                     )
-
 
 def main():
     """This is the main function for the Streamlit app."""
@@ -411,7 +554,7 @@ def main():
             ["Home", 'Data points', 'Generator'], 
             icons=['house', 'database-add', 'file-binary'], 
             menu_icon="cast", 
-            default_index=2 # Start on generator page
+            default_index=1 
         )
 
     if menu_selection == "Home":
