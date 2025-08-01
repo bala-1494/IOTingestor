@@ -82,6 +82,16 @@ def add_data_point(name, identifiers, asset_types, data_type, range_min, range_m
     conn.commit()
     conn.close()
 
+def update_data_point(dp_id, name, identifiers, asset_types, data_type, range_min, range_max):
+    """Updates an existing data point in the database, identified by its ID."""
+    conn = get_db_connection()
+    conn.execute(
+        'UPDATE data_points SET name = ?, identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ? WHERE id = ?',
+        (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, dp_id)
+    )
+    conn.commit()
+    conn.close()
+
 def update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max):
     """Updates an existing data point in the database, identified by its name."""
     conn = get_db_connection()
@@ -125,6 +135,13 @@ def get_data_point_by_id(dp_id):
     dp = conn.execute('SELECT * FROM data_points WHERE id = ?', (dp_id,)).fetchone()
     conn.close()
     return dp
+
+def delete_all_data_points():
+    """Deletes all records from the data_points table."""
+    conn = get_db_connection()
+    conn.execute('DELETE FROM data_points')
+    conn.commit()
+    conn.close()
 
 def check_identifier_uniqueness(identifiers, current_dp_id=None):
     """
@@ -323,6 +340,14 @@ def data_points_page():
             except Exception as e:
                 st.error(f"An error occurred while processing the file: {e}")
 
+    # --- DANGER ZONE FOR DELETION ---
+    with st.expander("⚠️ Danger Zone"):
+        st.warning("This will permanently delete all data points. This action cannot be undone.")
+        if st.button("Delete All Data Points"):
+            delete_all_data_points()
+            st.success("All data points have been deleted.")
+            st.rerun()
+
 
     # Fetch asset types dynamically for dropdowns
     asset_type_options = get_all_asset_types()
@@ -376,7 +401,8 @@ def data_points_page():
                 elif not dp_name or not data_type or not asset_types:
                     st.warning("Please fill in all required fields.")
                 else:
-                    update_data_point(st.session_state.editing_dp_id, dp_name, identifiers, asset_types, data_type, range_min, range_max)
+                    # Use the correct update function that takes an ID
+                    update_data_point(st.session_state.editing_dp_id, dp_to_edit['name'], identifiers, asset_types, data_type, range_min, range_max)
                     st.success("Data point updated successfully!")
                     st.session_state.editing_dp_id = None
                     st.rerun()
