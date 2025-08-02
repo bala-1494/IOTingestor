@@ -192,6 +192,10 @@ def generate_mock_value(dp):
         min_val = dp['range_min'] if dp['range_min'] is not None else 0.0
         max_val = dp['range_max'] if dp['range_max'] is not None else 100.0
         return round(random.uniform(min_val, max_val), 2)
+    elif data_type == 'int':
+        min_val = int(dp['range_min'] if dp['range_min'] is not None else 0)
+        max_val = int(dp['range_max'] if dp['range_max'] is not None else 100)
+        return random.randint(min_val, max_val)
     elif data_type == 'boolean':
         return random.choice([True, False])
     elif data_type == 'string':
@@ -238,7 +242,7 @@ def validate_bulk_upload(df):
     """Validates the DataFrame from the uploaded Excel file."""
     errors = []
     required_columns = ["name", "identifiers", "asset_types", "data_type"]
-    valid_data_types = ["float", "boolean", "string"]
+    valid_data_types = ["float", "int", "boolean", "string"]
     available_asset_types = get_all_asset_types()
     
     for col in required_columns:
@@ -367,12 +371,12 @@ def data_points_page():
             
             dp_name = st.text_input("Data Point Name", value=dp_to_edit['name'], disabled=True) # Name is the key, so disable editing
             dp_identifiers_str = st.text_input("Identifiers (comma-separated)", value=format_json_list_for_display(dp_to_edit['identifiers']))
-            data_type_options = ["float", "boolean", "string"]
+            data_type_options = ["float", "int", "boolean", "string"]
             data_type_index = data_type_options.index(dp_to_edit['data_type']) if dp_to_edit['data_type'] in data_type_options else 0
             data_type = st.selectbox("Data Type", data_type_options, index=data_type_index)
             
             range_min, range_max = dp_to_edit['range_min'], dp_to_edit['range_max']
-            if data_type == 'float':
+            if data_type in ['float', 'int']:
                 col1, col2 = st.columns(2)
                 with col1:
                     range_min = st.number_input("Range Min", value=float(range_min or 0.0), format="%.2f")
@@ -413,10 +417,10 @@ def data_points_page():
             st.subheader("Enter New Data Point Details")
             dp_name = st.text_input("Data Point Name", placeholder="e.g., Main Power Consumption")
             dp_identifiers_str = st.text_input("Identifiers (comma-separated)", placeholder="e.g., id-001, main-power")
-            data_type = st.selectbox("Data Type", ["float", "boolean", "string"])
+            data_type = st.selectbox("Data Type", ["float", "int", "boolean", "string"])
             
             range_min, range_max = None, None
-            if data_type == 'float':
+            if data_type in ['float', 'int']:
                 col1, col2 = st.columns(2)
                 with col1:
                     range_min = st.number_input("Range Min", value=0.0, format="%.2f")
@@ -471,7 +475,7 @@ def data_points_page():
             row_cols[1].write(format_json_list_for_display(point['identifiers']))
             row_cols[2].write(format_json_list_for_display(point['asset_types']))
             row_cols[3].write(point['data_type'])
-            range_str = f"{point['range_min']} - {point['range_max']}" if point['data_type'] == 'float' else 'N/A'
+            range_str = f"{point['range_min']} - {point['range_max']}" if point['data_type'] in ['float', 'int'] else 'N/A'
             row_cols[4].write(range_str)
             with row_cols[5]:
                 if st.button("✏️", key=f"edit_{point['id']}", use_container_width=True):
