@@ -200,7 +200,7 @@ def generate_mock_value(dp):
     elif data_type == 'boolean':
         return random.choice([True, False])
     elif data_type == 'string':
-        if dp['string_options']:
+        if 'string_options' in dp.keys() and dp['string_options']:
             options = [opt.strip() for opt in dp['string_options'].split(',')]
             return random.choice(options)
         return "Sample String" # Fallback
@@ -380,7 +380,9 @@ def data_points_page():
             data_type_index = data_type_options.index(dp_to_edit['data_type']) if dp_to_edit['data_type'] in data_type_options else 0
             data_type = st.selectbox("Data Type", data_type_options, index=data_type_index)
             
-            range_min, range_max, string_options = dp_to_edit['range_min'], dp_to_edit['range_max'], dp_to_edit['string_options']
+            string_options_val = dp_to_edit['string_options'] if 'string_options' in dp_to_edit.keys() else ""
+            range_min, range_max, string_options = dp_to_edit['range_min'], dp_to_edit['range_max'], string_options_val
+            
             if data_type in ['float', 'int']:
                 col1, col2 = st.columns(2)
                 with col1:
@@ -489,7 +491,8 @@ def data_points_page():
             if point['data_type'] in ['float', 'int']:
                 range_str = f"{point['range_min']} - {point['range_max']}"
             elif point['data_type'] == 'string':
-                range_str = point['string_options'] or 'N/A'
+                # Safely access 'string_options' to prevent KeyError
+                range_str = point['string_options'] if 'string_options' in point.keys() and point['string_options'] else 'N/A'
             else:
                 range_str = 'N/A'
             row_cols[4].write(range_str)
