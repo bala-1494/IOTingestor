@@ -370,15 +370,18 @@ def data_points_page():
     # --- ADD/EDIT FORMS ---
     if st.session_state.editing_dp_id is not None:
         # --- EDIT FORM ---
+        st.subheader("Editing Data Point")
         dp_to_edit = get_data_point_by_id(st.session_state.editing_dp_id)
+        
+        data_type_options = ["float", "int", "boolean", "string"]
+        data_type_index = data_type_options.index(dp_to_edit['data_type']) if dp_to_edit['data_type'] in data_type_options else 0
+        
+        # Selectbox is now outside the form to allow dynamic updates
+        data_type = st.selectbox("Data Type", data_type_options, index=data_type_index, key=f"edit_data_type_{dp_to_edit['id']}")
+
         with st.form("edit_data_point_form"):
-            st.subheader(f"Editing Data Point: {dp_to_edit['name']}")
-            
-            dp_name = st.text_input("Data Point Name", value=dp_to_edit['name'], disabled=True) # Name is the key, so disable editing
+            dp_name = st.text_input("Data Point Name", value=dp_to_edit['name'], disabled=True)
             dp_identifiers_str = st.text_input("Identifiers (comma-separated)", value=format_json_list_for_display(dp_to_edit['identifiers']))
-            data_type_options = ["float", "int", "boolean", "string"]
-            data_type_index = data_type_options.index(dp_to_edit['data_type']) if dp_to_edit['data_type'] in data_type_options else 0
-            data_type = st.selectbox("Data Type", data_type_options, index=data_type_index)
             
             string_options_val = dp_to_edit['string_options'] if 'string_options' in dp_to_edit.keys() else ""
             range_min, range_max, string_options = dp_to_edit['range_min'], dp_to_edit['range_max'], string_options_val
@@ -394,7 +397,7 @@ def data_points_page():
 
             asset_types = st.multiselect(
                 "Asset Type(s)",
-                asset_type_options, # Use dynamic list
+                asset_type_options,
                 default=[atype for atype in json.loads(dp_to_edit['asset_types'] or '[]') if atype in asset_type_options]
             )
 
@@ -411,10 +414,7 @@ def data_points_page():
                 duplicate = check_identifier_uniqueness(identifiers, current_dp_id=st.session_state.editing_dp_id)
                 if duplicate:
                     st.error(f"Identifier '{duplicate}' is already in use. Please choose a unique identifier.")
-                elif not dp_name or not data_type or not asset_types:
-                    st.warning("Please fill in all required fields.")
                 else:
-                    # Use the correct update function that takes an ID
                     update_data_point(st.session_state.editing_dp_id, dp_to_edit['name'], identifiers, asset_types, data_type, range_min, range_max, string_options)
                     st.success("Data point updated successfully!")
                     st.session_state.editing_dp_id = None
@@ -422,11 +422,14 @@ def data_points_page():
 
     elif st.session_state.show_add_form:
         # --- ADD FORM ---
+        st.subheader("Enter New Data Point Details")
+        
+        # Selectbox is now outside the form to allow dynamic updates
+        data_type = st.selectbox("Data Type", ["float", "int", "boolean", "string"], key="add_data_type")
+        
         with st.form("new_data_point_form"):
-            st.subheader("Enter New Data Point Details")
             dp_name = st.text_input("Data Point Name", placeholder="e.g., Main Power Consumption")
             dp_identifiers_str = st.text_input("Identifiers (comma-separated)", placeholder="e.g., id-001, main-power")
-            data_type = st.selectbox("Data Type", ["float", "int", "boolean", "string"])
             
             range_min, range_max, string_options = None, None, None
             if data_type in ['float', 'int']:
@@ -438,8 +441,7 @@ def data_points_page():
             elif data_type == 'string':
                 string_options = st.text_input("String Options (comma-separated)", placeholder="e.g., ON, OFF, STANDBY")
 
-
-            asset_types = st.multiselect("Asset Type(s)", asset_type_options) # Use dynamic list
+            asset_types = st.multiselect("Asset Type(s)", asset_type_options)
 
             col_submit, col_cancel = st.columns(2)
             with col_submit:
