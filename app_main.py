@@ -29,7 +29,8 @@ def init_db():
             asset_types TEXT,
             data_type TEXT NOT NULL,
             range_min REAL,
-            range_max REAL
+            range_max REAL,
+            string_options TEXT
         )
     ''')
     # Create asset_types table
@@ -72,32 +73,32 @@ def get_all_asset_types():
     conn.close()
     return [row['name'] for row in types]
 
-def add_data_point(name, identifiers, asset_types, data_type, range_min, range_max):
+def add_data_point(name, identifiers, asset_types, data_type, range_min, range_max, string_options):
     """Adds a new data point to the database."""
     conn = get_db_connection()
     conn.execute(
-        'INSERT INTO data_points (name, identifiers, asset_types, data_type, range_min, range_max) VALUES (?, ?, ?, ?, ?, ?)',
-        (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max)
+        'INSERT INTO data_points (name, identifiers, asset_types, data_type, range_min, range_max, string_options) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options)
     )
     conn.commit()
     conn.close()
 
-def update_data_point(dp_id, name, identifiers, asset_types, data_type, range_min, range_max):
+def update_data_point(dp_id, name, identifiers, asset_types, data_type, range_min, range_max, string_options):
     """Updates an existing data point in the database, identified by its ID."""
     conn = get_db_connection()
     conn.execute(
-        'UPDATE data_points SET name = ?, identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ? WHERE id = ?',
-        (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, dp_id)
+        'UPDATE data_points SET name = ?, identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ?, string_options = ? WHERE id = ?',
+        (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options, dp_id)
     )
     conn.commit()
     conn.close()
 
-def update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max):
+def update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max, string_options):
     """Updates an existing data point in the database, identified by its name."""
     conn = get_db_connection()
     conn.execute(
-        'UPDATE data_points SET identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ? WHERE name = ?',
-        (json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, name)
+        'UPDATE data_points SET identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ?, string_options = ? WHERE name = ?',
+        (json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options, name)
     )
     conn.commit()
     conn.close()
@@ -199,7 +200,10 @@ def generate_mock_value(dp):
     elif data_type == 'boolean':
         return random.choice([True, False])
     elif data_type == 'string':
-        return f"Sample String {random.randint(1, 100)}"
+        if dp['string_options']:
+            options = [opt.strip() for opt in dp['string_options'].split(',')]
+            return random.choice(options)
+        return "Sample String" # Fallback
     return None
 
 def format_timestamp(dt_object):
@@ -219,7 +223,7 @@ def create_sample_excel():
     sheet = workbook.active
     sheet.title = "DataPoints"
     
-    headers = ["name", "identifiers", "asset_types", "data_type", "range_min", "range_max"]
+    headers = ["name", "identifiers", "asset_types", "data_type", "range_min", "range_max", "string_options"]
     sheet.append(headers)
     
     # Style headers
@@ -228,7 +232,7 @@ def create_sample_excel():
         
     # Add sample data
     sample_data = [
-        "Building Power", "bldg_pwr, main_kw", "Sub-Meter, HVAC", "float", 0, 5000
+        "Building Power", "bldg_pwr, main_kw", "Sub-Meter, HVAC", "float", 0, 5000, ""
     ]
     sheet.append(sample_data)
     
@@ -330,13 +334,14 @@ def data_points_page():
                         data_type = row['data_type']
                         range_min = row.get('range_min') if pd.notna(row.get('range_min')) else None
                         range_max = row.get('range_max') if pd.notna(row.get('range_max')) else None
+                        string_options = row.get('string_options') if pd.notna(row.get('string_options')) else None
 
                         if name in existing_names:
                             # Update existing data point
-                            update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max)
+                            update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max, string_options)
                         else:
                             # Add new data point
-                            add_data_point(name, identifiers, asset_types, data_type, range_min, range_max)
+                            add_data_point(name, identifiers, asset_types, data_type, range_min, range_max, string_options)
                     
                     st.success("Bulk upload complete!")
                     st.rerun()
@@ -375,13 +380,15 @@ def data_points_page():
             data_type_index = data_type_options.index(dp_to_edit['data_type']) if dp_to_edit['data_type'] in data_type_options else 0
             data_type = st.selectbox("Data Type", data_type_options, index=data_type_index)
             
-            range_min, range_max = dp_to_edit['range_min'], dp_to_edit['range_max']
+            range_min, range_max, string_options = dp_to_edit['range_min'], dp_to_edit['range_max'], dp_to_edit['string_options']
             if data_type in ['float', 'int']:
                 col1, col2 = st.columns(2)
                 with col1:
                     range_min = st.number_input("Range Min", value=float(range_min or 0.0), format="%.2f")
                 with col2:
                     range_max = st.number_input("Range Max", value=float(range_max or 100.0), format="%.2f")
+            elif data_type == 'string':
+                string_options = st.text_input("String Options (comma-separated)", value=string_options or "")
 
             asset_types = st.multiselect(
                 "Asset Type(s)",
@@ -406,7 +413,7 @@ def data_points_page():
                     st.warning("Please fill in all required fields.")
                 else:
                     # Use the correct update function that takes an ID
-                    update_data_point(st.session_state.editing_dp_id, dp_to_edit['name'], identifiers, asset_types, data_type, range_min, range_max)
+                    update_data_point(st.session_state.editing_dp_id, dp_to_edit['name'], identifiers, asset_types, data_type, range_min, range_max, string_options)
                     st.success("Data point updated successfully!")
                     st.session_state.editing_dp_id = None
                     st.rerun()
@@ -419,13 +426,16 @@ def data_points_page():
             dp_identifiers_str = st.text_input("Identifiers (comma-separated)", placeholder="e.g., id-001, main-power")
             data_type = st.selectbox("Data Type", ["float", "int", "boolean", "string"])
             
-            range_min, range_max = None, None
+            range_min, range_max, string_options = None, None, None
             if data_type in ['float', 'int']:
                 col1, col2 = st.columns(2)
                 with col1:
                     range_min = st.number_input("Range Min", value=0.0, format="%.2f")
                 with col2:
                     range_max = st.number_input("Range Max", value=100.0, format="%.2f")
+            elif data_type == 'string':
+                string_options = st.text_input("String Options (comma-separated)", placeholder="e.g., ON, OFF, STANDBY")
+
 
             asset_types = st.multiselect("Asset Type(s)", asset_type_options) # Use dynamic list
 
@@ -445,7 +455,7 @@ def data_points_page():
                 elif not dp_name or not data_type or not asset_types:
                     st.warning("Please fill in all required fields.")
                 else:
-                    add_data_point(dp_name, identifiers, asset_types, data_type, range_min, range_max)
+                    add_data_point(dp_name, identifiers, asset_types, data_type, range_min, range_max, string_options)
                     st.success(f"Successfully added data point: {dp_name}")
                     st.session_state.show_add_form = False
                     st.rerun()
@@ -465,7 +475,7 @@ def data_points_page():
         st.info("No data points found. Click 'Add New Data Point' to get started.")
     else:
         header_cols = st.columns([3, 3, 3, 2, 2, 1])
-        headers = ["Data Point Name", "Identifiers", "Asset Types", "Data Type", "Range", "Actions"]
+        headers = ["Data Point Name", "Identifiers", "Asset Types", "Data Type", "Range/Options", "Actions"]
         for col, header in zip(header_cols, headers):
             col.markdown(f"**{header}**")
         
@@ -475,8 +485,15 @@ def data_points_page():
             row_cols[1].write(format_json_list_for_display(point['identifiers']))
             row_cols[2].write(format_json_list_for_display(point['asset_types']))
             row_cols[3].write(point['data_type'])
-            range_str = f"{point['range_min']} - {point['range_max']}" if point['data_type'] in ['float', 'int'] else 'N/A'
+            
+            if point['data_type'] in ['float', 'int']:
+                range_str = f"{point['range_min']} - {point['range_max']}"
+            elif point['data_type'] == 'string':
+                range_str = point['string_options'] or 'N/A'
+            else:
+                range_str = 'N/A'
             row_cols[4].write(range_str)
+            
             with row_cols[5]:
                 if st.button("✏️", key=f"edit_{point['id']}", use_container_width=True):
                     st.session_state.editing_dp_id = point['id']
