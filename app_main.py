@@ -137,6 +137,13 @@ def get_data_point_by_id(dp_id):
     conn.close()
     return dp
 
+def get_data_point_by_name(name):
+    """Fetches a single data point by its name."""
+    conn = get_db_connection()
+    dp = conn.execute('SELECT * FROM data_points WHERE name = ?', (name,)).fetchone()
+    conn.close()
+    return dp
+
 def delete_all_data_points():
     """Deletes all records from the data_points table."""
     conn = get_db_connection()
@@ -453,11 +460,15 @@ def data_points_page():
 
             if submitted:
                 identifiers = [identifier.strip() for identifier in dp_identifiers_str.split(',') if identifier.strip()]
-                duplicate = check_identifier_uniqueness(identifiers)
-                if duplicate:
-                    st.error(f"Identifier '{duplicate}' is already in use. Please choose a unique identifier.")
-                elif not dp_name or not data_type or not asset_types:
+                duplicate_identifier = check_identifier_uniqueness(identifiers)
+                existing_dp = get_data_point_by_name(dp_name)
+
+                if not dp_name or not data_type or not asset_types:
                     st.warning("Please fill in all required fields.")
+                elif existing_dp:
+                    st.error(f"Data point with name '{dp_name}' already exists.")
+                elif duplicate_identifier:
+                    st.error(f"Identifier '{duplicate_identifier}' is already in use. Please choose a unique identifier.")
                 else:
                     add_data_point(dp_name, identifiers, asset_types, data_type, range_min, range_max, string_options)
                     st.success(f"Successfully added data point: {dp_name}")
