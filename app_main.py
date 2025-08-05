@@ -18,10 +18,11 @@ def get_db_connection():
     return conn
 
 def init_db():
-    """Initializes the database and creates the tables if they don't exist."""
+    """Initializes the database and creates/updates tables as needed."""
     conn = get_db_connection()
-    # Create data_points table
-    conn.execute('''
+    cursor = conn.cursor()
+    # Create data_points table if it doesn't exist
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS data_points (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
@@ -29,24 +30,29 @@ def init_db():
             asset_types TEXT,
             data_type TEXT NOT NULL,
             range_min REAL,
-            range_max REAL,
-            string_options TEXT
+            range_max REAL
         )
     ''')
-    # Create asset_types table
-    conn.execute('''
+
+    # --- SCHEMA MIGRATION: Add string_options column if it doesn't exist ---
+    cursor.execute("PRAGMA table_info(data_points)")
+    columns = [info['name'] for info in cursor.fetchall()]
+    if 'string_options' not in columns:
+        cursor.execute("ALTER TABLE data_points ADD COLUMN string_options TEXT")
+
+    # Create asset_types table if it doesn't exist
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS asset_types (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE
         )
     ''')
     # Check if the asset_types table is empty and populate it with defaults
-    cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM asset_types")
     if cursor.fetchone()[0] == 0:
         default_types = ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor"]
         for asset_type in default_types:
-            conn.execute("INSERT INTO asset_types (name) VALUES (?)", (asset_type,))
+            cursor.execute("INSERT INTO asset_types (name) VALUES (?)", (asset_type,))
     
     conn.commit()
     conn.close()
