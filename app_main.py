@@ -2,10 +2,10 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 
 from database import init_db
-from pages.home import home_page
-from pages.data_points import data_points_page
-from pages.generator import generator_page
-from pages.multi_json_generator import multi_json_generator_page
+from app_pages.home import home_page
+from app_pages.data_points import data_points_page
+from app_pages.generator import generator_page
+from app_pages.multi_json_generator import multi_json_generator_page
 
 def main():
     """This is the main function for the Streamlit app."""
