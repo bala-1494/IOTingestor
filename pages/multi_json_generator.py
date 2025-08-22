@@ -15,9 +15,11 @@ def multi_json_generator_page():
         st.warning("No asset types found. Please add one on the 'Data points' page first.")
         return
 
-    # Use session state to manage PLD inputs
+    # Use session state to manage PLD inputs and frequencies
     if 'pld_inputs' not in st.session_state:
         st.session_state.pld_inputs = {}
+    if 'pld_frequencies' not in st.session_state:
+        st.session_state.pld_frequencies = {}
 
     with st.form("multi_generator_form"):
         st.subheader("Generation Parameters")
@@ -27,10 +29,21 @@ def multi_json_generator_page():
         for asset_type in selected_asset_types:
             if asset_type not in st.session_state.pld_inputs:
                 st.session_state.pld_inputs[asset_type] = [""] # Start with one input field
+            if asset_type not in st.session_state.pld_frequencies:
+                st.session_state.pld_frequencies[asset_type] = 60 # Default frequency
 
         for asset_type in selected_asset_types:
             with st.container(border=True):
-                st.markdown(f"**PLDs for {asset_type}**")
+                st.markdown(f"**{asset_type} Configuration**")
+
+                st.session_state.pld_frequencies[asset_type] = st.number_input(
+                    "Frequency (minutes)",
+                    min_value=1,
+                    value=st.session_state.pld_frequencies[asset_type],
+                    key=f"freq_{asset_type}"
+                )
+
+                st.markdown(f"**PLD IDs for {asset_type}**")
                 for i in range(len(st.session_state.pld_inputs[asset_type])):
                     st.session_state.pld_inputs[asset_type][i] = st.text_input(
                         f"PLD ID {i+1}",
@@ -58,11 +71,10 @@ def multi_json_generator_page():
         end_datetime = datetime.datetime.combine(end_date, datetime.time.max)
         total_seconds = (end_datetime - start_datetime).total_seconds()
 
-        for asset_type, plds in st.session_state.pld_inputs.items():
-            if asset_type not in selected_asset_types:
-                continue
-
+        for asset_type in selected_asset_types:
+            plds = st.session_state.pld_inputs.get(asset_type, [])
             cleaned_plds = [pld.strip() for pld in plds if pld.strip()]
+
             if not cleaned_plds:
                 st.error(f"Please provide at least one valid PLD ID for {asset_type}.")
                 has_errors = True
@@ -73,12 +85,23 @@ def multi_json_generator_page():
                 st.warning(f"No data points found for asset type '{asset_type}'. Skipping.")
                 continue
 
+            frequency_minutes = st.session_state.pld_frequencies.get(asset_type, 60)
+            if frequency_minutes <= 0:
+                st.error(f"Frequency for {asset_type} must be a positive number.")
+                has_errors = True
+                continue
+
+            interval_seconds = frequency_minutes * 60
+            if total_seconds < interval_seconds:
+                # If the time range is smaller than the frequency, generate at least one packet
+                num_packets = 1
+            else:
+                num_packets = int(total_seconds / interval_seconds)
+
             for pld_id in cleaned_plds:
-                # Generate a random number of packets for this PLD in the time range
-                num_packets = random.randint(5, 20)
-                for _ in range(num_packets):
-                    random_seconds = random.uniform(0, total_seconds)
-                    random_timestamp = start_datetime + datetime.timedelta(seconds=random_seconds)
+                for i in range(num_packets):
+                    # Distribute timestamps evenly
+                    current_timestamp = start_datetime + datetime.timedelta(seconds=i * interval_seconds)
 
                     parameters = {}
                     for dp in matching_dps:
@@ -88,14 +111,14 @@ def multi_json_generator_page():
                     packet = {
                         "pld": pld_id,
                         "asset_type": asset_type,
-                        "timestamp": format_timestamp(random_timestamp),
+                        "timestamp": format_timestamp(current_timestamp),
                         "parameters": parameters
                     }
                     all_packets.append(packet)
 
         if not has_errors and all_packets:
-            # Shuffle the list to mix data from different sources
-            random.shuffle(all_packets)
+            # Sort the packets by timestamp to create a chronological stream
+            all_packets.sort(key=lambda p: p['timestamp'])
 
             st.success(f"Successfully generated {len(all_packets)} mixed packets!")
             st.subheader("Generated JSON Preview (First Packet)")
