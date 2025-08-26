@@ -59,8 +59,11 @@ def data_points_page():
                 else:
                     st.success("File validation successful! Processing records...")
                     # Get existing data point names for update/add logic
-                    existing_points_df, _ = get_all_data_points()
-                    existing_names = [row['name'] for row in existing_points_df]
+                    existing_points, columns = get_all_data_points()
+                    existing_points_df = pd.DataFrame(existing_points, columns=columns)
+                    existing_names = []
+                    if not existing_points_df.empty:
+                        existing_names = existing_points_df['name'].tolist()
 
                     for i, row in validated_df.iterrows():
                         name = row['name']
