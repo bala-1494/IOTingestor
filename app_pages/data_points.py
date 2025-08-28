@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json
+import logging
 from database import (
     add_asset_type,
     get_all_asset_types,
@@ -15,6 +16,13 @@ from database import (
 )
 from utils import format_json_list_for_display
 from bulk_upload import create_sample_excel, validate_bulk_upload
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    filename="bulk_upload.log",
+    filemode="w",
+)
 
 def data_points_page():
     """
@@ -48,25 +56,31 @@ def data_points_page():
         uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx"])
 
         if uploaded_file is not None:
+            logging.info(f"Uploaded file received: {uploaded_file.name}")
             try:
                 df = pd.read_excel(uploaded_file)
+                logging.info("Successfully read excel file into DataFrame.")
                 errors, validated_df = validate_bulk_upload(df)
 
                 if errors:
+                    logging.error(f"Validation failed with errors: {errors}")
                     st.error("Validation failed. Please fix the following errors in your file:")
                     for error in errors:
                         st.write(f"- {error}")
                 else:
                     st.success("File validation successful! Processing records...")
+                    logging.info("File validation successful. Processing records...")
                     # Get existing data point names for update/add logic
                     existing_points, columns = get_all_data_points()
                     existing_points_df = pd.DataFrame(existing_points, columns=columns)
                     existing_names = []
                     if not existing_points_df.empty:
                         existing_names = existing_points_df['name'].tolist()
+                    logging.info(f"Found {len(existing_names)} existing data points.")
 
                     for i, row in validated_df.iterrows():
                         name = row['name']
+                        logging.info(f"Processing row {i+2}: {name}")
                         identifiers = [iden.strip() for iden in str(row['identifiers']).split(',')]
                         asset_types = [atype.strip() for atype in str(row['asset_types']).split(',')]
                         data_type = row['data_type']
@@ -75,16 +89,20 @@ def data_points_page():
                         string_options = row.get('string_options') if pd.notna(row.get('string_options')) else None
 
                         if name in existing_names:
+                            logging.info(f"Updating existing data point: {name}")
                             # Update existing data point
                             update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max, string_options)
                         else:
+                            logging.info(f"Adding new data point: {name}")
                             # Add new data point
                             add_data_point(name, identifiers, asset_types, data_type, range_min, range_max, string_options)
 
                     st.success("Bulk upload complete!")
+                    logging.info("Bulk upload complete!")
                     st.rerun()
 
             except Exception as e:
+                logging.error(f"An error occurred while processing the file: {e}", exc_info=True)
                 st.error(f"An error occurred while processing the file: {e}")
 
     # --- DANGER ZONE FOR DELETION ---
