@@ -230,31 +230,6 @@ def format_timestamp(dt_object):
 
 
 # --- BULK UPLOAD FUNCTIONS ---
-def create_sample_excel():
-    """Creates an in-memory Excel file with sample data for bulk upload."""
-    workbook = openpyxl.Workbook()
-    sheet = workbook.active
-    sheet.title = "DataPoints"
-    
-    headers = ["name", "identifiers", "asset_types", "data_type", "range_min", "range_max", "string_options"]
-    sheet.append(headers)
-    
-    # Style headers
-    for cell in sheet[1]:
-        cell.font = Font(bold=True)
-        
-    # Add sample data
-    sample_data = [
-        "Building Power", "bldg_pwr, main_kw", "Sub-Meter, HVAC", "float", 0, 5000, ""
-    ]
-    sheet.append(sample_data)
-    
-    # Save to a virtual file
-    virtual_workbook = io.BytesIO()
-    workbook.save(virtual_workbook)
-    virtual_workbook.seek(0)
-    return virtual_workbook.getvalue()
-
 def validate_bulk_upload(df):
     """Validates the DataFrame from the uploaded Excel file."""
     errors = []
@@ -262,12 +237,16 @@ def validate_bulk_upload(df):
     valid_data_types = ["float", "int", "boolean", "string"]
     available_asset_types = get_all_asset_types()
     
+    # Get existing data point names for update/add logic
+    existing_points_df, _ = get_all_data_points()
+    existing_names = [row['name'] for row in existing_points_df]
+    
     for col in required_columns:
         if col not in df.columns:
             errors.append(f"Missing required column: '{col}'")
             return errors, None # Stop validation if columns are missing
 
-    # Check for empty required fields
+    # Check for empty required fields and name uniqueness
     for i, row in df.iterrows():
         for col in required_columns:
             if pd.isna(row[col]):
@@ -282,6 +261,12 @@ def validate_bulk_upload(df):
         for atype in asset_types:
             if atype not in available_asset_types:
                 errors.append(f"Row {i+2}: Asset type '{atype}' is not valid. Available types are: {available_asset_types}.")
+        
+        # Check for name uniqueness if it's a new entry
+        if row['name'] not in existing_names:
+            if get_data_point_by_name(row['name']):
+                 errors.append(f"Row {i+2}: Data point with name '{row['name']}' already exists.")
+
 
     return errors, df
 
@@ -315,52 +300,49 @@ def data_points_page():
                     st.error(f"Asset type '{new_asset_name}' already exists (case-insensitive).")
 
     # --- BULK UPLOAD ---
-    with st.expander("Bulk Add/Update Data Points"):
-        st.download_button(
-            label="Download Sample .xlsx File",
-            data=create_sample_excel(),
-            file_name="sample_data_points.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    with st.expander("Bulk Add/Update via Text"):
+        st.info("Paste data from a spreadsheet. Ensure the first row is a header with columns: name, identifiers, asset_types, data_type, range_min, range_max, string_options")
+        pasted_data = st.text_area("Paste table data here", height=200)
         
-        uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx"])
-        
-        if uploaded_file is not None:
-            try:
-                df = pd.read_excel(uploaded_file)
-                errors, validated_df = validate_bulk_upload(df)
-                
-                if errors:
-                    st.error("Validation failed. Please fix the following errors in your file:")
-                    for error in errors:
-                        st.write(f"- {error}")
-                else:
-                    st.success("File validation successful! Processing records...")
-                    # Get existing data point names for update/add logic
-                    existing_points_df, _ = get_all_data_points()
-                    existing_names = [row['name'] for row in existing_points_df]
-
-                    for i, row in validated_df.iterrows():
-                        name = row['name']
-                        identifiers = [iden.strip() for iden in str(row['identifiers']).split(',')]
-                        asset_types = [atype.strip() for atype in str(row['asset_types']).split(',')]
-                        data_type = row['data_type']
-                        range_min = row.get('range_min') if pd.notna(row.get('range_min')) else None
-                        range_max = row.get('range_max') if pd.notna(row.get('range_max')) else None
-                        string_options = row.get('string_options') if pd.notna(row.get('string_options')) else None
-
-                        if name in existing_names:
-                            # Update existing data point
-                            update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max, string_options)
-                        else:
-                            # Add new data point
-                            add_data_point(name, identifiers, asset_types, data_type, range_min, range_max, string_options)
+        if st.button("Process Pasted Data"):
+            if pasted_data:
+                try:
+                    data_io = io.StringIO(pasted_data)
+                    df = pd.read_csv(data_io, sep='\t')
                     
-                    st.success("Bulk upload complete!")
-                    st.rerun()
+                    errors, validated_df = validate_bulk_upload(df)
+                    
+                    if errors:
+                        st.error("Validation failed. Please fix the following errors:")
+                        for error in errors:
+                            st.write(f"- {error}")
+                    else:
+                        st.success("Data validation successful! Processing records...")
+                        existing_points_df, _ = get_all_data_points()
+                        existing_names = [row['name'] for row in existing_points_df]
 
-            except Exception as e:
-                st.error(f"An error occurred while processing the file: {e}")
+                        for i, row in validated_df.iterrows():
+                            name = row['name']
+                            identifiers = [iden.strip() for iden in str(row['identifiers']).split(',')]
+                            asset_types = [atype.strip() for atype in str(row['asset_types']).split(',')]
+                            data_type = row['data_type']
+                            range_min = row.get('range_min') if pd.notna(row.get('range_min')) else None
+                            range_max = row.get('range_max') if pd.notna(row.get('range_max')) else None
+                            string_options = row.get('string_options') if pd.notna(row.get('string_options')) else None
+
+                            if name in existing_names:
+                                update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max, string_options)
+                            else:
+                                add_data_point(name, identifiers, asset_types, data_type, range_min, range_max, string_options)
+                        
+                        st.success("Bulk processing complete!")
+                        st.rerun()
+
+                except Exception as e:
+                    st.error(f"An error occurred while parsing the data. Please ensure it is tab-separated. Error: {e}")
+            else:
+                st.warning("Please paste some data into the text area.")
+
 
     # --- DANGER ZONE FOR DELETION ---
     with st.expander("⚠️ Danger Zone"):
