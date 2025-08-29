@@ -28,7 +28,7 @@ def init_db():
     """
     try:
         response = supabase.table("asset_types").select("id", count="exact").execute()
-        if response.get("count") == 0:
+        if response.count == 0:
             default_types = ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor"]
             for asset_type in default_types:
                 add_asset_type(asset_type)
@@ -43,7 +43,7 @@ def add_asset_type(name):
     try:
         # Case-insensitive check
         existing = supabase.table("asset_types").select("id").ilike("name", name).execute()
-        if existing.get("data"):
+        if existing.data:
             return False  # Duplicate
 
         supabase.table("asset_types").insert({"name": name}).execute()
@@ -56,7 +56,7 @@ def get_all_asset_types():
     """Fetches all asset type names from the database."""
     try:
         response = supabase.table("asset_types").select("name").order("name", desc=False).execute()
-        return [row['name'] for row in response.get("data", [])]
+        return [row['name'] for row in response.data]
     except Exception as e:
         st.error(f"Error fetching asset types: {e}")
         return []
@@ -114,7 +114,7 @@ def get_all_data_points():
     """
     try:
         response = supabase.table("data_points").select("*").order("id", desc=True).execute()
-        data = response.get("data", [])
+        data = response.data
         columns = list(data[0].keys()) if data else []
         return data, columns
     except Exception as e:
@@ -127,7 +127,7 @@ def get_data_points_by_asset_type(target_asset_type):
     try:
         # In Supabase, you can filter on JSONB arrays using the `cs` (contains) operator.
         response = supabase.table("data_points").select("*").cs("asset_types", [target_asset_type]).execute()
-        return response.get("data", [])
+        return response.data
     except Exception as e:
         st.error(f"Error fetching data points by asset type: {e}")
         return []
@@ -137,7 +137,7 @@ def get_data_point_by_id(dp_id):
     """Fetches a single data point by its ID."""
     try:
         response = supabase.table("data_points").select("*").eq("id", dp_id).execute()
-        return response.get("data", [None])[0]
+        return response.data[0] if response.data else None
     except Exception as e:
         st.error(f"Error fetching data point by ID: {e}")
         return None
@@ -146,7 +146,7 @@ def get_data_point_by_name(name):
     """Fetches a single data point by its name."""
     try:
         response = supabase.table("data_points").select("*").eq("name", name).execute()
-        return response.get("data", [None])[0]
+        return response.data[0] if response.data else None
     except Exception as e:
         st.error(f"Error fetching data point by name: {e}")
         return None
@@ -174,7 +174,7 @@ def check_identifier_uniqueness(identifiers, current_dp_id=None):
         if current_dp_id is not None:
             query = query.neq("id", current_dp_id)
             
-        all_dps = query.execute().get("data", [])
+        all_dps = query.execute().data
 
         for identifier in identifiers:
             for row in all_dps:
