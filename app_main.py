@@ -1,6 +1,6 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
-import sqlite3
+from supabase_py import create_client, Client
 import pandas as pd
 import json
 import datetime
@@ -8,154 +8,158 @@ import random
 import io
 import openpyxl
 from openpyxl.styles import Font
+import os
 
 # --- DATABASE SETUP ---
 
-def get_db_connection():
-    """Establishes a connection to the SQLite database."""
-    conn = sqlite3.connect('data_points.db')
-    conn.row_factory = sqlite3.Row
-    return conn
+# Initialize Supabase client
+try:
+    supabase_url = st.secrets["SUPABASE_URL"]
+    supabase_key = st.secrets["SUPABASE_KEY"]
+    supabase: Client = create_client(supabase_url, supabase_key)
+except (KeyError, AttributeError):
+    st.error("Supabase credentials not found. Please add them to your Streamlit secrets.")
+    st.stop()
 
 def init_db():
-    """Initializes the database and creates/updates tables as needed."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    # Create data_points table if it doesn't exist
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS data_points (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            identifiers TEXT,
-            asset_types TEXT,
-            data_type TEXT NOT NULL,
-            range_min REAL,
-            range_max REAL
-        )
-    ''')
+    """
+    Initializes the database in Supabase. This function checks if the asset_types
+    table is empty and, if so, populates it with default values.
+    """
+    try:
+        response = supabase.table("asset_types").select("id", count="exact").execute()
+        if response.get("count") == 0:
+            default_types = ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor"]
+            for asset_type in default_types:
+                add_asset_type(asset_type)
+    except Exception as e:
+        # If the table doesn't exist, this will fail. We can ignore this error
+        # as the user is responsible for creating the tables.
+        pass
 
-    # --- SCHEMA MIGRATION: Add string_options column if it doesn't exist ---
-    cursor.execute("PRAGMA table_info(data_points)")
-    columns = [info['name'] for info in cursor.fetchall()]
-    if 'string_options' not in columns:
-        cursor.execute("ALTER TABLE data_points ADD COLUMN string_options TEXT")
-
-    # Create asset_types table if it doesn't exist
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS asset_types (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE
-        )
-    ''')
-    # Check if the asset_types table is empty and populate it with defaults
-    cursor.execute("SELECT COUNT(*) FROM asset_types")
-    if cursor.fetchone()[0] == 0:
-        default_types = ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor"]
-        for asset_type in default_types:
-            cursor.execute("INSERT INTO asset_types (name) VALUES (?)", (asset_type,))
-    
-    conn.commit()
-    conn.close()
 
 def add_asset_type(name):
     """Adds a new asset type to the database, checking for uniqueness (case-insensitive)."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    # Case-insensitive check for uniqueness
-    cursor.execute("SELECT id FROM asset_types WHERE LOWER(name) = ?", (name.lower(),))
-    if cursor.fetchone():
-        conn.close()
-        return False # Indicates duplicate
-    
-    cursor.execute("INSERT INTO asset_types (name) VALUES (?)", (name,))
-    conn.commit()
-    conn.close()
-    return True # Indicates success
+    try:
+        # Case-insensitive check
+        existing = supabase.table("asset_types").select("id").ilike("name", name).execute()
+        if existing.get("data"):
+            return False  # Duplicate
+
+        supabase.table("asset_types").insert({"name": name}).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error adding asset type: {e}")
+        return False
 
 def get_all_asset_types():
     """Fetches all asset type names from the database."""
-    conn = get_db_connection()
-    types = conn.execute('SELECT name FROM asset_types ORDER BY name ASC').fetchall()
-    conn.close()
-    return [row['name'] for row in types]
+    try:
+        response = supabase.table("asset_types").select("name").order("name", desc=False).execute()
+        return [row['name'] for row in response.get("data", [])]
+    except Exception as e:
+        st.error(f"Error fetching asset types: {e}")
+        return []
 
 def add_data_point(name, identifiers, asset_types, data_type, range_min, range_max, string_options):
     """Adds a new data point to the database."""
-    conn = get_db_connection()
-    conn.execute(
-        'INSERT INTO data_points (name, identifiers, asset_types, data_type, range_min, range_max, string_options) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        supabase.table("data_points").insert({
+            "name": name,
+            "identifiers": identifiers,
+            "asset_types": asset_types,
+            "data_type": data_type,
+            "range_min": range_min,
+            "range_max": range_max,
+            "string_options": string_options
+        }).execute()
+    except Exception as e:
+        st.error(f"Error adding data point: {e}")
+
 
 def update_data_point(dp_id, name, identifiers, asset_types, data_type, range_min, range_max, string_options):
     """Updates an existing data point in the database, identified by its ID."""
-    conn = get_db_connection()
-    conn.execute(
-        'UPDATE data_points SET name = ?, identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ?, string_options = ? WHERE id = ?',
-        (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options, dp_id)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        supabase.table("data_points").update({
+            "name": name,
+            "identifiers": identifiers,
+            "asset_types": asset_types,
+            "data_type": data_type,
+            "range_min": range_min,
+            "range_max": range_max,
+            "string_options": string_options
+        }).eq("id", dp_id).execute()
+    except Exception as e:
+        st.error(f"Error updating data point: {e}")
 
 def update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max, string_options):
     """Updates an existing data point in the database, identified by its name."""
-    conn = get_db_connection()
-    conn.execute(
-        'UPDATE data_points SET identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ?, string_options = ? WHERE name = ?',
-        (json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options, name)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        supabase.table("data_points").update({
+            "identifiers": identifiers,
+            "asset_types": asset_types,
+            "data_type": data_type,
+            "range_min": range_min,
+            "range_max": range_max,
+            "string_options": string_options
+        }).eq("name", name).execute()
+    except Exception as e:
+        st.error(f"Error updating data point by name: {e}")
+
 
 def get_all_data_points():
     """
     Fetches all data points and their column names from the database.
     Returns a tuple of (rows, column_names).
     """
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM data_points ORDER BY id DESC')
-    data_points = cursor.fetchall()
-    columns = [description[0] for description in cursor.description] if cursor.description else []
-    conn.close()
-    return data_points, columns
+    try:
+        response = supabase.table("data_points").select("*").order("id", desc=True).execute()
+        data = response.get("data", [])
+        columns = list(data[0].keys()) if data else []
+        return data, columns
+    except Exception as e:
+        st.error(f"Error fetching data points: {e}")
+        return [], []
+
 
 def get_data_points_by_asset_type(target_asset_type):
     """Fetches all data points associated with a specific asset type."""
-    conn = get_db_connection()
-    all_dps = conn.execute('SELECT * FROM data_points').fetchall()
-    conn.close()
-    
-    matching_dps = []
-    for dp in all_dps:
-        asset_types = json.loads(dp['asset_types'] or '[]')
-        if target_asset_type in asset_types:
-            matching_dps.append(dp)
-    return matching_dps
+    try:
+        # In Supabase, you can filter on JSONB arrays using the `cs` (contains) operator.
+        response = supabase.table("data_points").select("*").cs("asset_types", [target_asset_type]).execute()
+        return response.get("data", [])
+    except Exception as e:
+        st.error(f"Error fetching data points by asset type: {e}")
+        return []
 
 
 def get_data_point_by_id(dp_id):
     """Fetches a single data point by its ID."""
-    conn = get_db_connection()
-    dp = conn.execute('SELECT * FROM data_points WHERE id = ?', (dp_id,)).fetchone()
-    conn.close()
-    return dp
+    try:
+        response = supabase.table("data_points").select("*").eq("id", dp_id).execute()
+        return response.get("data", [None])[0]
+    except Exception as e:
+        st.error(f"Error fetching data point by ID: {e}")
+        return None
 
 def get_data_point_by_name(name):
     """Fetches a single data point by its name."""
-    conn = get_db_connection()
-    dp = conn.execute('SELECT * FROM data_points WHERE name = ?', (name,)).fetchone()
-    conn.close()
-    return dp
+    try:
+        response = supabase.table("data_points").select("*").eq("name", name).execute()
+        return response.get("data", [None])[0]
+    except Exception as e:
+        st.error(f"Error fetching data point by name: {e}")
+        return None
 
 def delete_all_data_points():
     """Deletes all records from the data_points table."""
-    conn = get_db_connection()
-    conn.execute('DELETE FROM data_points')
-    conn.commit()
-    conn.close()
+    try:
+        # Supabase does not support deleting all rows without a filter for safety.
+        # A workaround is to delete rows with a known condition, like id > 0.
+        supabase.table("data_points").delete().gt("id", 0).execute()
+    except Exception as e:
+        st.error(f"Error deleting all data points: {e}")
+
 
 def check_identifier_uniqueness(identifiers, current_dp_id=None):
     """
@@ -163,25 +167,23 @@ def check_identifier_uniqueness(identifiers, current_dp_id=None):
     excluding the current data point being edited.
     Returns the first duplicate identifier found, or None if all are unique.
     """
-    conn = get_db_connection()
-    query = 'SELECT id, identifiers FROM data_points'
-    all_dps = conn.execute(query).fetchall()
-    conn.close()
+    try:
+        query = supabase.table("data_points").select("id, identifiers")
 
-    for identifier in identifiers:
-        for row in all_dps:
-            # Skip the current data point when checking for duplicates during an update
-            if current_dp_id is not None and row['id'] == current_dp_id:
-                continue
+        # Exclude the current data point from the check
+        if current_dp_id is not None:
+            query = query.neq("id", current_dp_id)
             
-            if row['identifiers']:
-                try:
-                    existing_identifiers = json.loads(row['identifiers'])
-                    if identifier in existing_identifiers:
-                        return identifier # Found a duplicate
-                except json.JSONDecodeError:
-                    continue # Skip corrupted data
-    return None # All identifiers are unique
+        all_dps = query.execute().get("data", [])
+
+        for identifier in identifiers:
+            for row in all_dps:
+                if row.get('identifiers') and identifier in row['identifiers']:
+                    return identifier
+        return None
+    except Exception as e:
+        st.error(f"Error checking identifier uniqueness: {e}")
+        return "Error" # Return a string to indicate an error occurred
 
 # --- HELPER FUNCTIONS ---
 def format_json_list_for_display(json_string):
@@ -262,10 +264,10 @@ def validate_bulk_upload(df):
             if atype not in available_asset_types:
                 errors.append(f"Row {i+2}: Asset type '{atype}' is not valid. Available types are: {available_asset_types}.")
         
-        # Check for name uniqueness if it's a new entry
-        if row['name'] not in existing_names:
-            if get_data_point_by_name(row['name']):
-                 errors.append(f"Row {i+2}: Data point with name '{row['name']}' already exists.")
+        # Name uniqueness is no longer required per user feedback.
+        # Identifier uniqueness is handled by the application for single entries.
+        # A more robust bulk upload would check for identifier uniqueness here too.
+        pass
 
 
     return errors, df
@@ -393,7 +395,7 @@ def data_points_page():
             asset_types = st.multiselect(
                 "Asset Type(s)",
                 asset_type_options,
-                default=[atype for atype in json.loads(dp_to_edit['asset_types'] or '[]') if atype in asset_type_options]
+                default=[atype for atype in (dp_to_edit.get('asset_types') or []) if atype in asset_type_options]
             )
 
             col_submit, col_cancel = st.columns(2)
@@ -449,12 +451,8 @@ def data_points_page():
             if submitted:
                 identifiers = [identifier.strip() for identifier in dp_identifiers_str.split(',') if identifier.strip()]
                 duplicate_identifier = check_identifier_uniqueness(identifiers)
-                existing_dp = get_data_point_by_name(dp_name)
-
                 if not dp_name or not data_type or not asset_types:
                     st.warning("Please fill in all required fields.")
-                elif existing_dp:
-                    st.error(f"Data point with name '{dp_name}' already exists.")
                 elif duplicate_identifier:
                     st.error(f"Identifier '{duplicate_identifier}' is already in use. Please choose a unique identifier.")
                 else:
@@ -560,7 +558,7 @@ def generator_page():
                         "tms": format_timestamp(current_time)
                     }
                     for dp in matching_dps:
-                        key = (json.loads(dp['identifiers'])[0] if dp['identifiers'] and json.loads(dp['identifiers']) else dp['name'].replace(" ", "_").lower())
+                        key = (dp['identifiers'][0] if dp.get('identifiers') else dp['name'].replace(" ", "_").lower())
                         sii_data[key] = generate_mock_value(dp)
 
                     single_packet_json = {
@@ -674,7 +672,7 @@ def multi_json_generator_page():
                     
                     parameters = {}
                     for dp in matching_dps:
-                        key = (json.loads(dp['identifiers'])[0] if dp['identifiers'] and json.loads(dp['identifiers']) else dp['name'].replace(" ", "_").lower())
+                        key = (dp['identifiers'][0] if dp.get('identifiers') else dp['name'].replace(" ", "_").lower())
                         parameters[key] = generate_mock_value(dp)
 
                     packet = {
