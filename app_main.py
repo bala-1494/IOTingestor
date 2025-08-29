@@ -1,6 +1,6 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
-from supabase_py import create_client, Client
+from supabase import create_client, Client
 import pandas as pd
 import json
 import datetime
@@ -23,27 +23,27 @@ except (KeyError, AttributeError):
 
 def init_db():
     """
-    Initializes the database in Supabase. This function checks if the asset_types
-    table is empty and, if so, populates it with default values.
+    Initializes the database in Supabase by populating the asset_types table
+    with default values if they don't already exist.
     """
     try:
-        response = supabase.table("asset_types").select("id", count="exact").execute()
-        if response.get("count") == 0:
-            default_types = ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor"]
-            for asset_type in default_types:
-                add_asset_type(asset_type)
+        default_types = ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor"]
+        data_to_insert = [{"name": name} for name in default_types]
+        supabase.table("asset_types").upsert(
+            data_to_insert,
+            on_conflict="name",
+            ignore_duplicates=True
+        ).execute()
     except Exception as e:
-        # If the table doesn't exist, this will fail. We can ignore this error
-        # as the user is responsible for creating the tables.
+        st.warning(f"Could not initialize default asset types. Please ensure the 'asset_types' table exists. Error: {e}")
         pass
 
 
 def add_asset_type(name):
     """Adds a new asset type to the database, checking for uniqueness (case-insensitive)."""
     try:
-        # Case-insensitive check
         existing = supabase.table("asset_types").select("id").ilike("name", name).execute()
-        if existing.get("data"):
+        if existing.data:
             return False  # Duplicate
 
         supabase.table("asset_types").insert({"name": name}).execute()
@@ -56,7 +56,7 @@ def get_all_asset_types():
     """Fetches all asset type names from the database."""
     try:
         response = supabase.table("asset_types").select("name").order("name", desc=False).execute()
-        return [row['name'] for row in response.get("data", [])]
+        return [row['name'] for row in response.data]
     except Exception as e:
         st.error(f"Error fetching asset types: {e}")
         return []
@@ -114,7 +114,7 @@ def get_all_data_points():
     """
     try:
         response = supabase.table("data_points").select("*").order("id", desc=True).execute()
-        data = response.get("data", [])
+        data = response.data
         columns = list(data[0].keys()) if data else []
         return data, columns
     except Exception as e:
@@ -125,9 +125,11 @@ def get_all_data_points():
 def get_data_points_by_asset_type(target_asset_type):
     """Fetches all data points associated with a specific asset type."""
     try:
-        # In Supabase, you can filter on JSONB arrays using the `cs` (contains) operator.
-        response = supabase.table("data_points").select("*").cs("asset_types", [target_asset_type]).execute()
-        return response.get("data", [])
+        # **FIXED AGAIN**: Convert the list to a JSON string to handle spaces correctly.
+        # The .contains() operator needs a valid JSONB array literal.
+        json_array_string = json.dumps([target_asset_type])
+        response = supabase.table("data_points").select("*").contains("asset_types", json_array_string).execute()
+        return response.data
     except Exception as e:
         st.error(f"Error fetching data points by asset type: {e}")
         return []
@@ -137,7 +139,7 @@ def get_data_point_by_id(dp_id):
     """Fetches a single data point by its ID."""
     try:
         response = supabase.table("data_points").select("*").eq("id", dp_id).execute()
-        return response.get("data", [None])[0]
+        return response.data[0] if response.data else None
     except Exception as e:
         st.error(f"Error fetching data point by ID: {e}")
         return None
@@ -146,7 +148,7 @@ def get_data_point_by_name(name):
     """Fetches a single data point by its name."""
     try:
         response = supabase.table("data_points").select("*").eq("name", name).execute()
-        return response.get("data", [None])[0]
+        return response.data[0] if response.data else None
     except Exception as e:
         st.error(f"Error fetching data point by name: {e}")
         return None
@@ -154,8 +156,6 @@ def get_data_point_by_name(name):
 def delete_all_data_points():
     """Deletes all records from the data_points table."""
     try:
-        # Supabase does not support deleting all rows without a filter for safety.
-        # A workaround is to delete rows with a known condition, like id > 0.
         supabase.table("data_points").delete().gt("id", 0).execute()
     except Exception as e:
         st.error(f"Error deleting all data points: {e}")
@@ -169,12 +169,11 @@ def check_identifier_uniqueness(identifiers, current_dp_id=None):
     """
     try:
         query = supabase.table("data_points").select("id, identifiers")
-
-        # Exclude the current data point from the check
+        
         if current_dp_id is not None:
             query = query.neq("id", current_dp_id)
             
-        all_dps = query.execute().get("data", [])
+        all_dps = query.execute().data
 
         for identifier in identifiers:
             for row in all_dps:
@@ -183,23 +182,24 @@ def check_identifier_uniqueness(identifiers, current_dp_id=None):
         return None
     except Exception as e:
         st.error(f"Error checking identifier uniqueness: {e}")
-        return "Error" # Return a string to indicate an error occurred
+        return "Error"
 
 # --- HELPER FUNCTIONS ---
-def format_json_list_for_display(json_string):
+def format_list_for_display(items):
     """
-    Safely loads a JSON string that is expected to be a list and returns 
-    a comma-separated string for display. Returns an empty string on failure.
+    Takes a list (or a JSON string representing a list) and returns
+    a comma-separated string for display.
     """
-    if not json_string:
+    if not items:
         return ""
-    try:
-        items = json.loads(json_string)
-        if isinstance(items, list):
-            return ", ".join(map(str, items))
-        return ""
-    except (json.JSONDecodeError, TypeError):
-        return ""
+    if isinstance(items, str):
+        try:
+            items = json.loads(items)
+        except (json.JSONDecodeError, TypeError):
+            return ""
+    if isinstance(items, list):
+        return ", ".join(map(str, items))
+    return ""
 
 def generate_mock_value(dp):
     """Generates a random value based on the data point's type and range."""
@@ -218,15 +218,13 @@ def generate_mock_value(dp):
         if 'string_options' in dp.keys() and dp['string_options']:
             options = [opt.strip() for opt in dp['string_options'].split(',')]
             return random.choice(options)
-        return "Sample String" # Fallback
+        return "Sample String"
     return None
 
 def format_timestamp(dt_object):
     """Formats a datetime object to 'YYYY-MM-DDTHH:MM:SS+0530'."""
-    # Using a fixed timezone for consistency as Streamlit server might be in UTC
     tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
     dt_aware = dt_object.replace(tzinfo=tz)
-    # Format to ISO 8601 with timezone
     iso_str = dt_aware.strftime('%Y-%m-%dT%H:%M:%S%z')
     return iso_str
 
@@ -239,37 +237,27 @@ def validate_bulk_upload(df):
     valid_data_types = ["float", "int", "boolean", "string"]
     available_asset_types = get_all_asset_types()
     
-    # Get existing data point names for update/add logic
     existing_points_df, _ = get_all_data_points()
     existing_names = [row['name'] for row in existing_points_df]
     
     for col in required_columns:
         if col not in df.columns:
             errors.append(f"Missing required column: '{col}'")
-            return errors, None # Stop validation if columns are missing
+            return errors, None
 
-    # Check for empty required fields and name uniqueness
     for i, row in df.iterrows():
         for col in required_columns:
             if pd.isna(row[col]):
                 errors.append(f"Row {i+2}: Missing value in required column '{col}'.")
         
-        # Validate data_type
         if row['data_type'] not in valid_data_types:
             errors.append(f"Row {i+2}: Invalid data_type '{row['data_type']}'. Must be one of {valid_data_types}.")
             
-        # Validate asset_types
         asset_types = [atype.strip() for atype in str(row['asset_types']).split(',')]
         for atype in asset_types:
             if atype not in available_asset_types:
                 errors.append(f"Row {i+2}: Asset type '{atype}' is not valid. Available types are: {available_asset_types}.")
         
-        # Name uniqueness is no longer required per user feedback.
-        # Identifier uniqueness is handled by the application for single entries.
-        # A more robust bulk upload would check for identifier uniqueness here too.
-        pass
-
-
     return errors, df
 
 
@@ -284,12 +272,10 @@ def home_page():
 def data_points_page():
     """
     This function defines the content for the 'Data points' page.
-    It includes a table of existing points and forms to add or edit them.
     """
     st.title("Data Points")
     st.header("Data Points Management")
 
-    # --- MANAGE ASSET TYPES ---
     with st.expander("Manage Asset Types"):
         with st.form("new_asset_type_form", clear_on_submit=True):
             new_asset_name = st.text_input("New Asset Type Name")
@@ -297,11 +283,10 @@ def data_points_page():
             if submitted and new_asset_name:
                 if add_asset_type(new_asset_name):
                     st.success(f"Asset type '{new_asset_name}' added successfully!")
-                    st.rerun() # Rerun to update dropdowns
+                    st.rerun()
                 else:
                     st.error(f"Asset type '{new_asset_name}' already exists (case-insensitive).")
 
-    # --- BULK UPLOAD ---
     with st.expander("Bulk Add/Update via Text"):
         st.info("Paste data from a spreadsheet. Ensure the first row is a header with columns: name, identifiers, asset_types, data_type, range_min, range_max, string_options")
         pasted_data = st.text_area("Paste table data here", height=200)
@@ -345,8 +330,6 @@ def data_points_page():
             else:
                 st.warning("Please paste some data into the text area.")
 
-
-    # --- DANGER ZONE FOR DELETION ---
     with st.expander("⚠️ Danger Zone"):
         st.warning("This will permanently delete all data points. This action cannot be undone.")
         if st.button("Delete All Data Points"):
@@ -354,34 +337,28 @@ def data_points_page():
             st.success("All data points have been deleted.")
             st.rerun()
 
-
-    # Fetch asset types dynamically for dropdowns
     asset_type_options = get_all_asset_types()
 
-    # --- STATE MANAGEMENT ---
     if "show_add_form" not in st.session_state:
         st.session_state.show_add_form = False
     if "editing_dp_id" not in st.session_state:
         st.session_state.editing_dp_id = None
 
-    # --- ADD/EDIT FORMS ---
     if st.session_state.editing_dp_id is not None:
-        # --- EDIT FORM ---
         st.subheader("Editing Data Point")
         dp_to_edit = get_data_point_by_id(st.session_state.editing_dp_id)
         
         data_type_options = ["float", "int", "boolean", "string"]
         data_type_index = data_type_options.index(dp_to_edit['data_type']) if dp_to_edit['data_type'] in data_type_options else 0
         
-        # Selectbox is now outside the form to allow dynamic updates
         data_type = st.selectbox("Data Type", data_type_options, index=data_type_index, key=f"edit_data_type_{dp_to_edit['id']}")
 
         with st.form("edit_data_point_form"):
             dp_name = st.text_input("Data Point Name", value=dp_to_edit['name'], disabled=True)
-            dp_identifiers_str = st.text_input("Identifiers (comma-separated)", value=format_json_list_for_display(dp_to_edit['identifiers']))
+            dp_identifiers_str = st.text_input("Identifiers (comma-separated)", value=format_list_for_display(dp_to_edit['identifiers']))
             
-            string_options_val = dp_to_edit['string_options'] if 'string_options' in dp_to_edit.keys() else ""
-            range_min, range_max, string_options = dp_to_edit['range_min'], dp_to_edit['range_max'], string_options_val
+            string_options_val = dp_to_edit.get('string_options', "")
+            range_min, range_max, string_options = dp_to_edit.get('range_min'), dp_to_edit.get('range_max'), string_options_val
             
             if data_type in ['float', 'int']:
                 col1, col2 = st.columns(2)
@@ -418,10 +395,8 @@ def data_points_page():
                     st.rerun()
 
     elif st.session_state.show_add_form:
-        # --- ADD FORM ---
         st.subheader("Enter New Data Point Details")
         
-        # Selectbox is now outside the form to allow dynamic updates
         data_type = st.selectbox("Data Type", ["float", "int", "boolean", "string"], key="add_data_type")
         
         with st.form("new_data_point_form"):
@@ -468,7 +443,6 @@ def data_points_page():
 
     st.divider()
 
-    # --- DISPLAY EXISTING DATA POINTS ---
     st.subheader("Existing Data Points")
     all_points, columns = get_all_data_points()
 
@@ -483,15 +457,14 @@ def data_points_page():
         for point in all_points:
             row_cols = st.columns([3, 3, 3, 2, 2, 1])
             row_cols[0].write(point['name'])
-            row_cols[1].write(format_json_list_for_display(point['identifiers']))
-            row_cols[2].write(format_json_list_for_display(point['asset_types']))
+            row_cols[1].write(format_list_for_display(point['identifiers']))
+            row_cols[2].write(format_list_for_display(point['asset_types']))
             row_cols[3].write(point['data_type'])
             
             if point['data_type'] in ['float', 'int']:
-                range_str = f"{point['range_min']} - {point['range_max']}"
+                range_str = f"{point.get('range_min', 'N/A')} - {point.get('range_max', 'N/A')}"
             elif point['data_type'] == 'string':
-                # Safely access 'string_options' to prevent KeyError
-                range_str = point['string_options'] if 'string_options' in point.keys() and point['string_options'] else 'N/A'
+                range_str = point.get('string_options', 'N/A')
             else:
                 range_str = 'N/A'
             row_cols[4].write(range_str)
@@ -508,7 +481,6 @@ def generator_page():
     st.title("Sample Data Generator")
     st.header("Generate Mock JSON Data")
 
-    # Fetch asset types dynamically
     asset_type_options = get_all_asset_types()
     if not asset_type_options:
         st.warning("No asset types found. Please add one on the 'Data points' page first.")
@@ -605,7 +577,6 @@ def multi_json_generator_page():
         st.warning("No asset types found. Please add one on the 'Data points' page first.")
         return
 
-    # Use session state to manage PLD inputs
     if 'pld_inputs' not in st.session_state:
         st.session_state.pld_inputs = {}
 
@@ -616,7 +587,7 @@ def multi_json_generator_page():
         
         for asset_type in selected_asset_types:
             if asset_type not in st.session_state.pld_inputs:
-                st.session_state.pld_inputs[asset_type] = [""] # Start with one input field
+                st.session_state.pld_inputs[asset_type] = [""]
 
         for asset_type in selected_asset_types:
             with st.container(border=True):
@@ -664,7 +635,6 @@ def multi_json_generator_page():
                 continue
 
             for pld_id in cleaned_plds:
-                # Generate a random number of packets for this PLD in the time range
                 num_packets = random.randint(5, 20) 
                 for _ in range(num_packets):
                     random_seconds = random.uniform(0, total_seconds)
@@ -684,7 +654,6 @@ def multi_json_generator_page():
                     all_packets.append(packet)
 
         if not has_errors and all_packets:
-            # Shuffle the list to mix data from different sources
             random.shuffle(all_packets)
             
             st.success(f"Successfully generated {len(all_packets)} mixed packets!")
@@ -725,3 +694,4 @@ def main():
 if __name__ == '__main__':
     init_db()
     main()
+
