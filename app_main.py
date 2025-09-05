@@ -78,8 +78,8 @@ def add_asset_type(name):
 
 def get_all_asset_types():
     """Fetches all asset type names from the local database."""
+    conn = get_db_connection()
     try:
-        conn = get_db_connection()
         types = conn.execute('SELECT name FROM asset_types ORDER BY name ASC').fetchall()
         return [row['name'] for row in types]
     except sqlite3.Error as e:
@@ -91,8 +91,8 @@ def get_all_asset_types():
 
 def add_data_point(name, identifiers, asset_types, data_type, range_min, range_max, string_options):
     """Adds a new data point to the local database."""
+    conn = get_db_connection()
     try:
-        conn = get_db_connection()
         conn.execute(
             'INSERT INTO data_points (name, identifiers, asset_types, data_type, range_min, range_max, string_options) VALUES (?, ?, ?, ?, ?, ?, ?)',
             (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options)
@@ -107,8 +107,8 @@ def add_data_point(name, identifiers, asset_types, data_type, range_min, range_m
 
 def update_data_point(dp_id, name, identifiers, asset_types, data_type, range_min, range_max, string_options):
     """Updates an existing data point in the local database by its ID."""
+    conn = get_db_connection()
     try:
-        conn = get_db_connection()
         conn.execute(
             'UPDATE data_points SET name = ?, identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ?, string_options = ? WHERE id = ?',
             (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options, dp_id)
@@ -122,8 +122,8 @@ def update_data_point(dp_id, name, identifiers, asset_types, data_type, range_mi
 
 def update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max, string_options):
     """Updates an existing data point in the local database by its name."""
+    conn = get_db_connection()
     try:
-        conn = get_db_connection()
         conn.execute(
             'UPDATE data_points SET identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ?, string_options = ? WHERE name = ?',
             (json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options, name)
@@ -138,8 +138,8 @@ def update_data_point_by_name(name, identifiers, asset_types, data_type, range_m
 
 def get_all_data_points():
     """Fetches all data points and their column names from the local database."""
+    conn = get_db_connection()
     try:
-        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM data_points ORDER BY id DESC')
         data_points = cursor.fetchall()
@@ -155,13 +155,12 @@ def get_all_data_points():
 
 def get_data_points_by_asset_type(target_asset_type):
     """Fetches all data points associated with a specific asset type from local DB."""
+    conn = get_db_connection()
     try:
-        conn = get_db_connection()
         all_dps = conn.execute('SELECT * FROM data_points').fetchall()
         
         matching_dps = []
         for dp in all_dps:
-            # Manually parse the JSON string and check for the asset type
             asset_types = json.loads(dp['asset_types'] or '[]')
             if target_asset_type in asset_types:
                 matching_dps.append(dp)
@@ -176,8 +175,8 @@ def get_data_points_by_asset_type(target_asset_type):
 
 def get_data_point_by_id(dp_id):
     """Fetches a single data point by its ID from the local database."""
+    conn = get_db_connection()
     try:
-        conn = get_db_connection()
         dp = conn.execute('SELECT * FROM data_points WHERE id = ?', (dp_id,)).fetchone()
         return dp
     except sqlite3.Error as e:
@@ -189,8 +188,8 @@ def get_data_point_by_id(dp_id):
 
 def get_data_point_by_name(name):
     """Fetches a single data point by its name from the local database."""
+    conn = get_db_connection()
     try:
-        conn = get_db_connection()
         dp = conn.execute('SELECT * FROM data_points WHERE name = ?', (name,)).fetchone()
         return dp
     except sqlite3.Error as e:
@@ -202,8 +201,8 @@ def get_data_point_by_name(name):
 
 def delete_all_data_points():
     """Deletes all records from the data_points table in the local database."""
+    conn = get_db_connection()
     try:
-        conn = get_db_connection()
         conn.execute('DELETE FROM data_points')
         conn.commit()
     except sqlite3.Error as e:
@@ -216,8 +215,8 @@ def check_identifier_uniqueness(identifiers, current_dp_id=None):
     """
     Checks if any of the given identifiers already exist in the local database.
     """
+    conn = get_db_connection()
     try:
-        conn = get_db_connection()
         query = 'SELECT id, identifiers FROM data_points'
         all_dps = conn.execute(query).fetchall()
 
@@ -241,7 +240,7 @@ def check_identifier_uniqueness(identifiers, current_dp_id=None):
         if conn:
             conn.close()
 
-# --- HELPER FUNCTIONS (No changes needed here) ---
+# --- HELPER FUNCTIONS ---
 def format_list_for_display(items):
     if not items:
         return ""
@@ -279,7 +278,7 @@ def format_timestamp(dt_object):
     iso_str = dt_aware.strftime('%Y-%m-%dT%H:%M:%S%z')
     return iso_str
 
-# --- BULK UPLOAD FUNCTIONS (No changes needed here) ---
+# --- BULK UPLOAD FUNCTIONS ---
 def validate_bulk_upload(df):
     errors = []
     required_columns = ["name", "identifiers", "asset_types", "data_type"]
@@ -309,7 +308,7 @@ def validate_bulk_upload(df):
         
     return errors, df
 
-# --- UI PAGES (Small changes to use SQLite logic) ---
+# --- UI PAGES ---
 
 def home_page():
     st.title("Home")
@@ -401,8 +400,9 @@ def data_points_page():
             dp_name = st.text_input("Data Point Name", value=dp_to_edit['name'], disabled=True)
             dp_identifiers_str = st.text_input("Identifiers (comma-separated)", value=format_list_for_display(dp_to_edit['identifiers']))
             
-            string_options_val = dp_to_edit.get('string_options', "") if 'string_options' in dp_to_edit.keys() else ""
-            range_min, range_max, string_options = dp_to_edit.get('range_min'), dp_to_edit.get('range_max'), string_options_val
+            # FIX: Safely access sqlite3.Row object
+            string_options_val = dp_to_edit['string_options'] if 'string_options' in dp_to_edit.keys() else ""
+            range_min, range_max = dp_to_edit['range_min'], dp_to_edit['range_max']
             
             if data_type in ['float', 'int']:
                 col1, col2 = st.columns(2)
@@ -411,7 +411,7 @@ def data_points_page():
                 with col2:
                     range_max = st.number_input("Range Max", value=float(range_max or 100.0), format="%.2f")
             elif data_type == 'string':
-                string_options = st.text_input("String Options (comma-separated)", value=string_options or "")
+                string_options = st.text_input("String Options (comma-separated)", value=string_options_val or "")
 
             asset_types_default = json.loads(dp_to_edit['asset_types'] or '[]')
             asset_types = st.multiselect(
@@ -508,10 +508,11 @@ def data_points_page():
             row_cols[2].write(format_list_for_display(point['asset_types']))
             row_cols[3].write(point['data_type'])
             
+            # FIX: Safely access sqlite3.Row object
             if point['data_type'] in ['float', 'int']:
-                range_str = f"{point.get('range_min', 'N/A')} - {point.get('range_max', 'N/A')}"
+                range_str = f"{point['range_min'] if point['range_min'] is not None else 'N/A'} - {point['range_max'] if point['range_max'] is not None else 'N/A'}"
             elif point['data_type'] == 'string':
-                range_str = point.get('string_options', 'N/A')
+                range_str = point['string_options'] if point['string_options'] else 'N/A'
             else:
                 range_str = 'N/A'
             row_cols[4].write(range_str)
@@ -576,6 +577,7 @@ def generator_page():
                         "tms": format_timestamp(current_time)
                     }
                     for dp in matching_dps:
+                        # FIX: Safely parse JSON from sqlite3.Row
                         identifiers = json.loads(dp['identifiers'] or '[]')
                         key = (identifiers[0] if identifiers else dp['name'].replace(" ", "_").lower())
                         sii_data[key] = generate_mock_value(dp)
@@ -688,6 +690,7 @@ def multi_json_generator_page():
                     
                     parameters = {}
                     for dp in matching_dps:
+                        # FIX: Safely parse JSON from sqlite3.Row
                         identifiers = json.loads(dp['identifiers'] or '[]')
                         key = (identifiers[0] if identifiers else dp['name'].replace(" ", "_").lower())
                         parameters[key] = generate_mock_value(dp)
