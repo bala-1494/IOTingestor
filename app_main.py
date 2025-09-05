@@ -1,6 +1,6 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
-from supabase import create_client, Client
+import sqlite3
 import pandas as pd
 import json
 import datetime
@@ -10,186 +10,239 @@ import openpyxl
 from openpyxl.styles import Font
 import os
 
-# --- DATABASE SETUP ---
+# --- LOCAL SQLITE DATABASE SETUP ---
 
-# Initialize Supabase client
-try:
-    supabase_url = st.secrets["SUPABASE_URL"]
-    supabase_key = st.secrets["SUPABASE_KEY"]
-    supabase: Client = create_client(supabase_url, supabase_key)
-except (KeyError, AttributeError):
-    st.error("Supabase credentials not found. Please add them to your Streamlit secrets.")
-    st.stop()
+def get_db_connection():
+    """Establishes a connection to the local SQLite database."""
+    conn = sqlite3.connect('local_data.db')
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
-    """
-    Initializes the database in Supabase by populating the asset_types table
-    with default values if they don't already exist.
-    """
-    try:
+    """Initializes the local database and creates tables if they don't exist."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Create asset_types table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS asset_types (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE
+        )
+    ''')
+    
+    # Create data_points table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS data_points (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            identifiers TEXT,
+            asset_types TEXT,
+            data_type TEXT NOT NULL,
+            range_min REAL,
+            range_max REAL,
+            string_options TEXT
+        )
+    ''')
+
+    # Populate asset_types with default values if empty
+    cursor.execute("SELECT COUNT(*) FROM asset_types")
+    if cursor.fetchone()[0] == 0:
         default_types = ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor"]
-        data_to_insert = [{"name": name} for name in default_types]
-        supabase.table("asset_types").upsert(
-            data_to_insert,
-            on_conflict="name",
-            ignore_duplicates=True
-        ).execute()
-    except Exception as e:
-        st.warning(f"Could not initialize default asset types. Please ensure the 'asset_types' table exists. Error: {e}")
-        pass
+        for asset_type in default_types:
+            conn.execute("INSERT INTO asset_types (name) VALUES (?)", (asset_type,))
+    
+    conn.commit()
+    conn.close()
 
 
 def add_asset_type(name):
-    """Adds a new asset type to the database, checking for uniqueness (case-insensitive)."""
+    """Adds a new asset type to the local database."""
     try:
-        existing = supabase.table("asset_types").select("id").ilike("name", name).execute()
-        if existing.data:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Case-insensitive check
+        cursor.execute("SELECT id FROM asset_types WHERE LOWER(name) = ?", (name.lower(),))
+        if cursor.fetchone():
             return False  # Duplicate
 
-        supabase.table("asset_types").insert({"name": name}).execute()
+        cursor.execute("INSERT INTO asset_types (name) VALUES (?)", (name,))
+        conn.commit()
         return True
-    except Exception as e:
-        st.error(f"Error adding asset type: {e}")
+    except sqlite3.Error as e:
+        st.error(f"Database error: {e}")
         return False
+    finally:
+        if conn:
+            conn.close()
 
 def get_all_asset_types():
-    """Fetches all asset type names from the database."""
+    """Fetches all asset type names from the local database."""
     try:
-        response = supabase.table("asset_types").select("name").order("name", desc=False).execute()
-        return [row['name'] for row in response.data]
-    except Exception as e:
-        st.error(f"Error fetching asset types: {e}")
+        conn = get_db_connection()
+        types = conn.execute('SELECT name FROM asset_types ORDER BY name ASC').fetchall()
+        return [row['name'] for row in types]
+    except sqlite3.Error as e:
+        st.error(f"Database error: {e}")
         return []
+    finally:
+        if conn:
+            conn.close()
 
 def add_data_point(name, identifiers, asset_types, data_type, range_min, range_max, string_options):
-    """Adds a new data point to the database."""
+    """Adds a new data point to the local database."""
     try:
-        supabase.table("data_points").insert({
-            "name": name,
-            "identifiers": identifiers,
-            "asset_types": asset_types,
-            "data_type": data_type,
-            "range_min": range_min,
-            "range_max": range_max,
-            "string_options": string_options
-        }).execute()
-    except Exception as e:
-        st.error(f"Error adding data point: {e}")
+        conn = get_db_connection()
+        conn.execute(
+            'INSERT INTO data_points (name, identifiers, asset_types, data_type, range_min, range_max, string_options) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options)
+        )
+        conn.commit()
+    except sqlite3.Error as e:
+        st.error(f"Database error: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 
 def update_data_point(dp_id, name, identifiers, asset_types, data_type, range_min, range_max, string_options):
-    """Updates an existing data point in the database, identified by its ID."""
+    """Updates an existing data point in the local database by its ID."""
     try:
-        supabase.table("data_points").update({
-            "name": name,
-            "identifiers": identifiers,
-            "asset_types": asset_types,
-            "data_type": data_type,
-            "range_min": range_min,
-            "range_max": range_max,
-            "string_options": string_options
-        }).eq("id", dp_id).execute()
-    except Exception as e:
-        st.error(f"Error updating data point: {e}")
+        conn = get_db_connection()
+        conn.execute(
+            'UPDATE data_points SET name = ?, identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ?, string_options = ? WHERE id = ?',
+            (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options, dp_id)
+        )
+        conn.commit()
+    except sqlite3.Error as e:
+        st.error(f"Database error: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 def update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max, string_options):
-    """Updates an existing data point in the database, identified by its name."""
+    """Updates an existing data point in the local database by its name."""
     try:
-        supabase.table("data_points").update({
-            "identifiers": identifiers,
-            "asset_types": asset_types,
-            "data_type": data_type,
-            "range_min": range_min,
-            "range_max": range_max,
-            "string_options": string_options
-        }).eq("name", name).execute()
-    except Exception as e:
-        st.error(f"Error updating data point by name: {e}")
+        conn = get_db_connection()
+        conn.execute(
+            'UPDATE data_points SET identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ?, string_options = ? WHERE name = ?',
+            (json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options, name)
+        )
+        conn.commit()
+    except sqlite3.Error as e:
+        st.error(f"Database error: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 
 def get_all_data_points():
-    """
-    Fetches all data points and their column names from the database.
-    Returns a tuple of (rows, column_names).
-    """
+    """Fetches all data points and their column names from the local database."""
     try:
-        response = supabase.table("data_points").select("*").order("id", desc=True).execute()
-        data = response.data
-        columns = list(data[0].keys()) if data else []
-        return data, columns
-    except Exception as e:
-        st.error(f"Error fetching data points: {e}")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM data_points ORDER BY id DESC')
+        data_points = cursor.fetchall()
+        columns = [description[0] for description in cursor.description] if cursor.description else []
+        return data_points, columns
+    except sqlite3.Error as e:
+        st.error(f"Database error: {e}")
         return [], []
+    finally:
+        if conn:
+            conn.close()
 
 
 def get_data_points_by_asset_type(target_asset_type):
-    """Fetches all data points associated with a specific asset type."""
+    """Fetches all data points associated with a specific asset type from local DB."""
     try:
-        # **FIXED AGAIN**: Convert the list to a JSON string to handle spaces correctly.
-        # The .contains() operator needs a valid JSONB array literal.
-        json_array_string = json.dumps([target_asset_type])
-        response = supabase.table("data_points").select("*").contains("asset_types", json_array_string).execute()
-        return response.data
-    except Exception as e:
+        conn = get_db_connection()
+        all_dps = conn.execute('SELECT * FROM data_points').fetchall()
+        
+        matching_dps = []
+        for dp in all_dps:
+            # Manually parse the JSON string and check for the asset type
+            asset_types = json.loads(dp['asset_types'] or '[]')
+            if target_asset_type in asset_types:
+                matching_dps.append(dp)
+        return matching_dps
+    except (sqlite3.Error, json.JSONDecodeError) as e:
         st.error(f"Error fetching data points by asset type: {e}")
         return []
+    finally:
+        if conn:
+            conn.close()
 
 
 def get_data_point_by_id(dp_id):
-    """Fetches a single data point by its ID."""
+    """Fetches a single data point by its ID from the local database."""
     try:
-        response = supabase.table("data_points").select("*").eq("id", dp_id).execute()
-        return response.data[0] if response.data else None
-    except Exception as e:
-        st.error(f"Error fetching data point by ID: {e}")
+        conn = get_db_connection()
+        dp = conn.execute('SELECT * FROM data_points WHERE id = ?', (dp_id,)).fetchone()
+        return dp
+    except sqlite3.Error as e:
+        st.error(f"Database error: {e}")
         return None
+    finally:
+        if conn:
+            conn.close()
 
 def get_data_point_by_name(name):
-    """Fetches a single data point by its name."""
+    """Fetches a single data point by its name from the local database."""
     try:
-        response = supabase.table("data_points").select("*").eq("name", name).execute()
-        return response.data[0] if response.data else None
-    except Exception as e:
-        st.error(f"Error fetching data point by name: {e}")
+        conn = get_db_connection()
+        dp = conn.execute('SELECT * FROM data_points WHERE name = ?', (name,)).fetchone()
+        return dp
+    except sqlite3.Error as e:
+        st.error(f"Database error: {e}")
         return None
+    finally:
+        if conn:
+            conn.close()
 
 def delete_all_data_points():
-    """Deletes all records from the data_points table."""
+    """Deletes all records from the data_points table in the local database."""
     try:
-        supabase.table("data_points").delete().gt("id", 0).execute()
-    except Exception as e:
-        st.error(f"Error deleting all data points: {e}")
-
+        conn = get_db_connection()
+        conn.execute('DELETE FROM data_points')
+        conn.commit()
+    except sqlite3.Error as e:
+        st.error(f"Database error: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 def check_identifier_uniqueness(identifiers, current_dp_id=None):
     """
-    Checks if any of the given identifiers already exist in the database,
-    excluding the current data point being edited.
-    Returns the first duplicate identifier found, or None if all are unique.
+    Checks if any of the given identifiers already exist in the local database.
     """
     try:
-        query = supabase.table("data_points").select("id, identifiers")
-        
-        if current_dp_id is not None:
-            query = query.neq("id", current_dp_id)
-            
-        all_dps = query.execute().data
+        conn = get_db_connection()
+        query = 'SELECT id, identifiers FROM data_points'
+        all_dps = conn.execute(query).fetchall()
 
         for identifier in identifiers:
             for row in all_dps:
-                if row.get('identifiers') and identifier in row['identifiers']:
-                    return identifier
+                if current_dp_id is not None and row['id'] == current_dp_id:
+                    continue
+                
+                if row['identifiers']:
+                    try:
+                        existing_identifiers = json.loads(row['identifiers'])
+                        if identifier in existing_identifiers:
+                            return identifier
+                    except json.JSONDecodeError:
+                        continue
         return None
-    except Exception as e:
-        st.error(f"Error checking identifier uniqueness: {e}")
+    except sqlite3.Error as e:
+        st.error(f"Database error: {e}")
         return "Error"
+    finally:
+        if conn:
+            conn.close()
 
-# --- HELPER FUNCTIONS ---
+# --- HELPER FUNCTIONS (No changes needed here) ---
 def format_list_for_display(items):
-    """
-    Takes a list (or a JSON string representing a list) and returns
-    a comma-separated string for display.
-    """
     if not items:
         return ""
     if isinstance(items, str):
@@ -202,7 +255,6 @@ def format_list_for_display(items):
     return ""
 
 def generate_mock_value(dp):
-    """Generates a random value based on the data point's type and range."""
     data_type = dp['data_type']
     if data_type == 'float':
         min_val = dp['range_min'] if dp['range_min'] is not None else 0.0
@@ -222,16 +274,13 @@ def generate_mock_value(dp):
     return None
 
 def format_timestamp(dt_object):
-    """Formats a datetime object to 'YYYY-MM-DDTHH:MM:SS+0530'."""
     tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
     dt_aware = dt_object.replace(tzinfo=tz)
     iso_str = dt_aware.strftime('%Y-%m-%dT%H:%M:%S%z')
     return iso_str
 
-
-# --- BULK UPLOAD FUNCTIONS ---
+# --- BULK UPLOAD FUNCTIONS (No changes needed here) ---
 def validate_bulk_upload(df):
-    """Validates the DataFrame from the uploaded Excel file."""
     errors = []
     required_columns = ["name", "identifiers", "asset_types", "data_type"]
     valid_data_types = ["float", "int", "boolean", "string"]
@@ -260,19 +309,14 @@ def validate_bulk_upload(df):
         
     return errors, df
 
-
-# --- UI PAGES ---
+# --- UI PAGES (Small changes to use SQLite logic) ---
 
 def home_page():
-    """This function defines the content for the 'Home' page."""
     st.title("Home")
     st.header("Welcome to the App!")
     st.write("Select an option from the menu to get started.")
 
 def data_points_page():
-    """
-    This function defines the content for the 'Data points' page.
-    """
     st.title("Data Points")
     st.header("Data Points Management")
 
@@ -357,7 +401,7 @@ def data_points_page():
             dp_name = st.text_input("Data Point Name", value=dp_to_edit['name'], disabled=True)
             dp_identifiers_str = st.text_input("Identifiers (comma-separated)", value=format_list_for_display(dp_to_edit['identifiers']))
             
-            string_options_val = dp_to_edit.get('string_options', "")
+            string_options_val = dp_to_edit.get('string_options', "") if 'string_options' in dp_to_edit.keys() else ""
             range_min, range_max, string_options = dp_to_edit.get('range_min'), dp_to_edit.get('range_max'), string_options_val
             
             if data_type in ['float', 'int']:
@@ -369,10 +413,11 @@ def data_points_page():
             elif data_type == 'string':
                 string_options = st.text_input("String Options (comma-separated)", value=string_options or "")
 
+            asset_types_default = json.loads(dp_to_edit['asset_types'] or '[]')
             asset_types = st.multiselect(
                 "Asset Type(s)",
                 asset_type_options,
-                default=[atype for atype in (dp_to_edit.get('asset_types') or []) if atype in asset_type_options]
+                default=[atype for atype in asset_types_default if atype in asset_type_options]
             )
 
             col_submit, col_cancel = st.columns(2)
@@ -428,6 +473,8 @@ def data_points_page():
                 duplicate_identifier = check_identifier_uniqueness(identifiers)
                 if not dp_name or not data_type or not asset_types:
                     st.warning("Please fill in all required fields.")
+                elif get_data_point_by_name(dp_name):
+                    st.error(f"Data point with name '{dp_name}' already exists.")
                 elif duplicate_identifier:
                     st.error(f"Identifier '{duplicate_identifier}' is already in use. Please choose a unique identifier.")
                 else:
@@ -477,7 +524,6 @@ def data_points_page():
 
 
 def generator_page():
-    """This function defines the content for the 'Generator' page."""
     st.title("Sample Data Generator")
     st.header("Generate Mock JSON Data")
 
@@ -530,7 +576,8 @@ def generator_page():
                         "tms": format_timestamp(current_time)
                     }
                     for dp in matching_dps:
-                        key = (dp['identifiers'][0] if dp.get('identifiers') else dp['name'].replace(" ", "_").lower())
+                        identifiers = json.loads(dp['identifiers'] or '[]')
+                        key = (identifiers[0] if identifiers else dp['name'].replace(" ", "_").lower())
                         sii_data[key] = generate_mock_value(dp)
 
                     single_packet_json = {
@@ -568,7 +615,6 @@ def generator_page():
                     )
 
 def multi_json_generator_page():
-    """This function defines the content for the 'Multi JSON Generator' page."""
     st.title("Multi JSON Generator")
     st.header("Generate Mixed-Source Mock Data")
 
@@ -642,7 +688,8 @@ def multi_json_generator_page():
                     
                     parameters = {}
                     for dp in matching_dps:
-                        key = (dp['identifiers'][0] if dp.get('identifiers') else dp['name'].replace(" ", "_").lower())
+                        identifiers = json.loads(dp['identifiers'] or '[]')
+                        key = (identifiers[0] if identifiers else dp['name'].replace(" ", "_").lower())
                         parameters[key] = generate_mock_value(dp)
 
                     packet = {
@@ -692,6 +739,7 @@ def main():
         multi_json_generator_page()
 
 if __name__ == '__main__':
+    # Initialize the local database on startup
     init_db()
     main()
 
