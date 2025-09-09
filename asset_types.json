@@ -1,0 +1,298 @@
+{
+    "assetTypes": [
+        {
+            "id": "1",
+            "value": "Diesel generator",
+            "disconnectionPeriod": "3",
+            "group": "Diesel generator"
+        },
+        {
+            "id": "2",
+            "value": "CCMS feeder",
+            "disconnectionPeriod": "3",
+            "group": "Intelligent lights"
+        },
+        {
+            "id": "3",
+            "value": "Smart light",
+            "disconnectionPeriod": "3",
+            "group": "Intelligent lights"
+        },
+        {
+            "id": "4",
+            "value": "Energy meter",
+            "disconnectionPeriod": "48",
+            "group": "Utilities"
+        },
+        {
+            "id": "5",
+            "value": "Gas meter",
+            "disconnectionPeriod": "48",
+            "group": "Utilities"
+        },
+        {
+            "id": "6",
+            "value": "Water meter",
+            "disconnectionPeriod": "48",
+            "group": "Utilities"
+        },
+        {
+            "id": "7",
+            "value": "AC three phase energy meter",
+            "disconnectionPeriod": "3",
+            "group": "Commercial energy meters"
+        },
+        {
+            "id": "8",
+            "value": "Split AC",
+            "disconnectionPeriod": "3",
+            "group": "HVAC"
+        },
+        {
+            "id": "9",
+            "value": "Indoor assets",
+            "disconnectionPeriod": "24",
+            "group": "Asset & People"
+        },
+        {
+            "id": "10",
+            "value": "Person",
+            "disconnectionPeriod": "24",
+            "group": "Asset & People"
+        },
+        {
+            "id": "11",
+            "value": "Smart transformer",
+            "disconnectionPeriod": "3",
+            "group": "Industrial equipment"
+        },
+        {
+            "id": "12",
+            "value": "Batteries",
+            "disconnectionPeriod": "24",
+            "group": "Sustainable energy assets"
+        },
+        {
+            "id": "13",
+            "value": "Refrigeration units",
+            "disconnectionPeriod": "3",
+            "group": "Cooling equipment"
+        },
+        {
+            "id": "14",
+            "value": "VISI coolers",
+            "disconnectionPeriod": "3",
+            "group": "Cooling equipment"
+        },
+        {
+            "id": "15",
+            "value": "Chest freezer",
+            "disconnectionPeriod": "3",
+            "group": "Cooling equipment"
+        },
+        {
+            "id": "16",
+            "value": "Display freezers",
+            "disconnectionPeriod": "3",
+            "group": "Cooling equipment"
+        },
+        {
+            "id": "17",
+            "value": "Ductable",
+            "disconnectionPeriod": "3",
+            "group": "HVAC"
+        },
+        {
+            "id": "18",
+            "value": "VRF System",
+            "disconnectionPeriod": "3",
+            "group": "HVAC"
+        },
+        {
+            "id": "19",
+            "value": "AHU",
+            "disconnectionPeriod": "3",
+            "group": "HVAC"
+        },
+        {
+            "id": "20",
+            "value": "Packaged indoor",
+            "disconnectionPeriod": "3",
+            "group": "HVAC"
+        },
+        {
+            "id": "21",
+            "value": "Chiller",
+            "disconnectionPeriod": "3",
+            "group": "HVAC"
+        },
+        {
+            "id": "22",
+            "value": "DC energy meter",
+            "disconnectionPeriod": "3",
+            "group": "Commercial energy meters"
+        },
+        {
+            "id": "23",
+            "value": "AC single phase",
+            "disconnectionPeriod": "3",
+            "group": "Commercial energy meters"
+        },
+        {
+            "id": "24",
+            "value": "Solar panel",
+            "disconnectionPeriod": "3",
+            "group": "Sustainable energy assets"
+        },
+        {
+            "id": "25",
+            "value": "Wind turbines",
+            "disconnectionPeriod": "3",
+            "group": "Sustainable energy assets"
+        },
+        {
+            "id": "26",
+            "value": "Solar pump",
+            "disconnectionPeriod": "3",
+            "group": "Sustainable energy assets"
+        },
+        {
+            "id": "27",
+            "value": "Non-smart light",
+            "disconnectionPeriod": "3",
+            "group": "Intelligent lights"
+        },
+        {
+            "id": "28",
+            "value": "Solar light",
+            "disconnectionPeriod": "3",
+            "group": "Intelligent lights"
+        },
+        {
+            "id": "29",
+            "value": "High mast",
+            "disconnectionPeriod": "3",
+            "group": "Intelligent lights"
+        },
+        {
+            "id": "30",
+            "value": "Mobile diesel generator",
+            "disconnectionPeriod": "3",
+            "group": "Diesel generator"
+        },
+        {
+            "id": "31",
+            "value": "Outdoor powered assets",
+            "disconnectionPeriod": "3",
+            "group": "Asset & People"
+        },
+        {
+            "id": "32",
+            "value": "Outdoor powerless assets",
+            "disconnectionPeriod": "3",
+            "group": "Asset & People"
+        },
+        {
+            "id": "33",
+            "value": "Water ATMs",
+            "disconnectionPeriod": "3",
+            "group": "Water Assets"
+        },
+        {
+            "id": "34",
+            "value": "Chlorination plants",
+            "disconnectionPeriod": "3",
+            "group": "Water Assets"
+        },
+        {
+            "id": "35",
+            "value": "Residential water purifiers",
+            "disconnectionPeriod": "3",
+            "group": "Water Assets"
+        },
+        {
+            "id": "36",
+            "value": "Commercial water purifiers",
+            "disconnectionPeriod": "3",
+            "group": "Water Assets"
+        },
+        {
+            "id": "37",
+            "value": "Fire alarm system",
+            "disconnectionPeriod": "3",
+            "group": "Fire alarm system"
+        },
+        {
+            "id": "38",
+            "value": "Fire suppression panels",
+            "disconnectionPeriod": "3",
+            "group": "Fire alarm system"
+        },
+        {
+            "id": "39",
+            "value": "Pipelines",
+            "disconnectionPeriod": "3",
+            "group": "Industrial equipment"
+        },
+        {
+            "id": "40",
+            "value": "Compressors",
+            "disconnectionPeriod": "3",
+            "group": "Industrial equipment"
+        },
+        {
+            "id": "41",
+            "value": "Off-road equipment",
+            "disconnectionPeriod": "3",
+            "group": "Industrial equipment"
+        },
+        {
+            "id": "42",
+            "value": "Manufacturing equipment",
+            "disconnectionPeriod": "3",
+            "group": "Industrial equipment"
+        },
+        {
+            "id": "43",
+            "value": "Industrial boilers",
+            "disconnectionPeriod": "3",
+            "group": "Industrial equipment"
+        },
+        {
+            "id": "44",
+            "value": "Vending machines",
+            "disconnectionPeriod": "3",
+            "group": "Commercial equipment and appliances"
+        },
+        {
+            "id": "45",
+            "value": "ATMs",
+            "disconnectionPeriod": "3",
+            "group": "Commercial equipment and appliances"
+        },
+        {
+            "id": "46",
+            "value": "Garbage bins",
+            "disconnectionPeriod": "3",
+            "group": "Commercial equipment and appliances"
+        },
+        {
+            "id": "47",
+            "value": "UPS",
+            "disconnectionPeriod": "3",
+            "group": "Sustainable energy assets"
+        },
+        {
+            "id": "48",
+            "value": "VRF Indoor",
+            "disconnectionPeriod": "3",
+            "group": "HVAC"
+        },
+        {
+            "id": "49",
+            "value": "VRF Outdoor",
+            "disconnectionPeriod": "3",
+            "group": "HVAC"
+        }
+    ]
+}

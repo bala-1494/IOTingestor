@@ -10,6 +10,25 @@ import openpyxl
 from openpyxl.styles import Font
 import os
 
+# --- ASSET TYPE LOADER ---
+
+def load_asset_types_from_json(file_path="asset_types.json"):
+    """Loads the asset types from a JSON file."""
+    try:
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+            # Access the list within the "assetTypes" key
+            return data.get("assetTypes", [])
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        st.error(f"Error loading asset types from {file_path}: {e}")
+        st.stop() # Stop the app if the master list can't be loaded
+        return []
+
+# Load the asset types into a global variable on startup
+ASSET_TYPES_JSON = load_asset_types_from_json()
+ASSET_TYPE_MAP = {asset['value']: asset['id'] for asset in ASSET_TYPES_JSON}
+
+
 # --- LOCAL SQLITE DATABASE SETUP ---
 
 def get_db_connection():
@@ -19,19 +38,11 @@ def get_db_connection():
     return conn
 
 def init_db():
-    """Initializes the local database and creates tables if they don't exist."""
+    """Initializes the local database and creates/updates the data_points table."""
     conn = get_db_connection()
     cursor = conn.cursor()
-
-    # Create asset_types table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS asset_types (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE
-        )
-    ''')
     
-    # Create data_points table
+    # Create data_points table if it doesn't exist
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS data_points (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,58 +55,29 @@ def init_db():
             string_options TEXT
         )
     ''')
-
-    # Populate asset_types with default values if empty
-    cursor.execute("SELECT COUNT(*) FROM asset_types")
-    if cursor.fetchone()[0] == 0:
-        default_types = ["DG", "HVAC", "SOLAR Inverter", "Sub-Meter", "Temp Sensor", "Hum Sensor"]
-        for asset_type in default_types:
-            conn.execute("INSERT INTO asset_types (name) VALUES (?)", (asset_type,))
     
+    # Add 'unit' column if it doesn't exist (for migration)
+    cursor.execute("PRAGMA table_info(data_points)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if 'unit' not in columns:
+        cursor.execute("ALTER TABLE data_points ADD COLUMN unit TEXT")
+
     conn.commit()
     conn.close()
 
-
-def add_asset_type(name):
-    """Adds a new asset type to the local database."""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        # Case-insensitive check
-        cursor.execute("SELECT id FROM asset_types WHERE LOWER(name) = ?", (name.lower(),))
-        if cursor.fetchone():
-            return False  # Duplicate
-
-        cursor.execute("INSERT INTO asset_types (name) VALUES (?)", (name,))
-        conn.commit()
-        return True
-    except sqlite3.Error as e:
-        st.error(f"Database error: {e}")
-        return False
-    finally:
-        if conn:
-            conn.close()
-
 def get_all_asset_types():
-    """Fetches all asset type names from the local database."""
-    conn = get_db_connection()
-    try:
-        types = conn.execute('SELECT name FROM asset_types ORDER BY name ASC').fetchall()
-        return [row['name'] for row in types]
-    except sqlite3.Error as e:
-        st.error(f"Database error: {e}")
+    """Fetches all asset type names from the loaded JSON list."""
+    if not ASSET_TYPES_JSON:
         return []
-    finally:
-        if conn:
-            conn.close()
+    return sorted([asset['value'] for asset in ASSET_TYPES_JSON])
 
-def add_data_point(name, identifiers, asset_types, data_type, range_min, range_max, string_options):
+def add_data_point(name, identifiers, asset_types, data_type, unit, range_min, range_max, string_options):
     """Adds a new data point to the local database."""
     conn = get_db_connection()
     try:
         conn.execute(
-            'INSERT INTO data_points (name, identifiers, asset_types, data_type, range_min, range_max, string_options) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options)
+            'INSERT INTO data_points (name, identifiers, asset_types, data_type, unit, range_min, range_max, string_options) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (name, json.dumps(identifiers), json.dumps(asset_types), data_type, unit, range_min, range_max, string_options)
         )
         conn.commit()
     except sqlite3.Error as e:
@@ -105,13 +87,13 @@ def add_data_point(name, identifiers, asset_types, data_type, range_min, range_m
             conn.close()
 
 
-def update_data_point(dp_id, name, identifiers, asset_types, data_type, range_min, range_max, string_options):
+def update_data_point(dp_id, name, identifiers, asset_types, data_type, unit, range_min, range_max, string_options):
     """Updates an existing data point in the local database by its ID."""
     conn = get_db_connection()
     try:
         conn.execute(
-            'UPDATE data_points SET name = ?, identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ?, string_options = ? WHERE id = ?',
-            (name, json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options, dp_id)
+            'UPDATE data_points SET name = ?, identifiers = ?, asset_types = ?, data_type = ?, unit = ?, range_min = ?, range_max = ?, string_options = ? WHERE id = ?',
+            (name, json.dumps(identifiers), json.dumps(asset_types), data_type, unit, range_min, range_max, string_options, dp_id)
         )
         conn.commit()
     except sqlite3.Error as e:
@@ -120,13 +102,13 @@ def update_data_point(dp_id, name, identifiers, asset_types, data_type, range_mi
         if conn:
             conn.close()
 
-def update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max, string_options):
+def update_data_point_by_name(name, identifiers, asset_types, data_type, unit, range_min, range_max, string_options):
     """Updates an existing data point in the local database by its name."""
     conn = get_db_connection()
     try:
         conn.execute(
-            'UPDATE data_points SET identifiers = ?, asset_types = ?, data_type = ?, range_min = ?, range_max = ?, string_options = ? WHERE name = ?',
-            (json.dumps(identifiers), json.dumps(asset_types), data_type, range_min, range_max, string_options, name)
+            'UPDATE data_points SET identifiers = ?, asset_types = ?, data_type = ?, unit = ?, range_min = ?, range_max = ?, string_options = ? WHERE name = ?',
+            (json.dumps(identifiers), json.dumps(asset_types), data_type, unit, range_min, range_max, string_options, name)
         )
         conn.commit()
     except sqlite3.Error as e:
@@ -137,17 +119,16 @@ def update_data_point_by_name(name, identifiers, asset_types, data_type, range_m
 
 
 def get_all_data_points():
-    """Fetches all data points and their column names from the local database."""
+    """Fetches all data points from the local database."""
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM data_points ORDER BY id DESC')
         data_points = cursor.fetchall()
-        columns = [description[0] for description in cursor.description] if cursor.description else []
-        return data_points, columns
+        return data_points
     except sqlite3.Error as e:
         st.error(f"Database error: {e}")
-        return [], []
+        return []
     finally:
         if conn:
             conn.close()
@@ -285,9 +266,6 @@ def validate_bulk_upload(df):
     valid_data_types = ["float", "int", "boolean", "string"]
     available_asset_types = get_all_asset_types()
     
-    existing_points_df, _ = get_all_data_points()
-    existing_names = [row['name'] for row in existing_points_df]
-    
     for col in required_columns:
         if col not in df.columns:
             errors.append(f"Missing required column: '{col}'")
@@ -304,7 +282,7 @@ def validate_bulk_upload(df):
         asset_types = [atype.strip() for atype in str(row['asset_types']).split(',')]
         for atype in asset_types:
             if atype not in available_asset_types:
-                errors.append(f"Row {i+2}: Asset type '{atype}' is not valid. Available types are: {available_asset_types}.")
+                errors.append(f"Row {i+2}: Asset type '{atype}' is not valid.")
         
     return errors, df
 
@@ -319,19 +297,8 @@ def data_points_page():
     st.title("Data Points")
     st.header("Data Points Management")
 
-    with st.expander("Manage Asset Types"):
-        with st.form("new_asset_type_form", clear_on_submit=True):
-            new_asset_name = st.text_input("New Asset Type Name")
-            submitted = st.form_submit_button("Add Asset Type")
-            if submitted and new_asset_name:
-                if add_asset_type(new_asset_name):
-                    st.success(f"Asset type '{new_asset_name}' added successfully!")
-                    st.rerun()
-                else:
-                    st.error(f"Asset type '{new_asset_name}' already exists (case-insensitive).")
-
     with st.expander("Bulk Add/Update via Text"):
-        st.info("Paste data from a spreadsheet. Ensure the first row is a header with columns: name, identifiers, asset_types, data_type, range_min, range_max, string_options")
+        st.info("Paste data from a spreadsheet. Header: name, identifiers, asset_types, data_type, unit, range_min, range_max, string_options")
         pasted_data = st.text_area("Paste table data here", height=200)
         
         if st.button("Process Pasted Data"):
@@ -348,22 +315,22 @@ def data_points_page():
                             st.write(f"- {error}")
                     else:
                         st.success("Data validation successful! Processing records...")
-                        existing_points_df, _ = get_all_data_points()
-                        existing_names = [row['name'] for row in existing_points_df]
+                        existing_names = [row['name'] for row in get_all_data_points()]
 
                         for i, row in validated_df.iterrows():
                             name = row['name']
                             identifiers = [iden.strip() for iden in str(row['identifiers']).split(',')]
                             asset_types = [atype.strip() for atype in str(row['asset_types']).split(',')]
                             data_type = row['data_type']
+                            unit = row.get('unit') if pd.notna(row.get('unit')) else "None"
                             range_min = row.get('range_min') if pd.notna(row.get('range_min')) else None
                             range_max = row.get('range_max') if pd.notna(row.get('range_max')) else None
                             string_options = row.get('string_options') if pd.notna(row.get('string_options')) else None
 
                             if name in existing_names:
-                                update_data_point_by_name(name, identifiers, asset_types, data_type, range_min, range_max, string_options)
+                                update_data_point_by_name(name, identifiers, asset_types, data_type, unit, range_min, range_max, string_options)
                             else:
-                                add_data_point(name, identifiers, asset_types, data_type, range_min, range_max, string_options)
+                                add_data_point(name, identifiers, asset_types, data_type, unit, range_min, range_max, string_options)
                         
                         st.success("Bulk processing complete!")
                         st.rerun()
@@ -381,6 +348,10 @@ def data_points_page():
             st.rerun()
 
     asset_type_options = get_all_asset_types()
+    
+    if not asset_type_options:
+        st.warning("Asset types could not be loaded. Please check the asset_types.json file.")
+        st.stop()
 
     if "show_add_form" not in st.session_state:
         st.session_state.show_add_form = False
@@ -399,26 +370,23 @@ def data_points_page():
         with st.form("edit_data_point_form"):
             dp_name = st.text_input("Data Point Name", value=dp_to_edit['name'], disabled=True)
             dp_identifiers_str = st.text_input("Identifiers (comma-separated)", value=format_list_for_display(dp_to_edit['identifiers']))
-            
-            # FIX: Safely access sqlite3.Row object
+            unit = st.text_input("Unit (e.g., C, V, kWh)", value=dp_to_edit['unit'] or "")
+
             string_options_val = dp_to_edit['string_options'] if 'string_options' in dp_to_edit.keys() else ""
             range_min, range_max = dp_to_edit['range_min'], dp_to_edit['range_max']
+            string_options = string_options_val
             
             if data_type in ['float', 'int']:
                 col1, col2 = st.columns(2)
                 with col1:
-                    range_min = st.number_input("Range Min", value=float(range_min or 0.0), format="%.2f")
+                    range_min = st.number_input("Range Min", value=float(range_min or 0.0))
                 with col2:
-                    range_max = st.number_input("Range Max", value=float(range_max or 100.0), format="%.2f")
+                    range_max = st.number_input("Range Max", value=float(range_max or 100.0))
             elif data_type == 'string':
                 string_options = st.text_input("String Options (comma-separated)", value=string_options_val or "")
 
             asset_types_default = json.loads(dp_to_edit['asset_types'] or '[]')
-            asset_types = st.multiselect(
-                "Asset Type(s)",
-                asset_type_options,
-                default=[atype for atype in asset_types_default if atype in asset_type_options]
-            )
+            asset_types = st.multiselect("Asset Type(s)", asset_type_options, default=[atype for atype in asset_types_default if atype in asset_type_options])
 
             col_submit, col_cancel = st.columns(2)
             with col_submit:
@@ -432,29 +400,29 @@ def data_points_page():
                 identifiers = [identifier.strip() for identifier in dp_identifiers_str.split(',') if identifier.strip()]
                 duplicate = check_identifier_uniqueness(identifiers, current_dp_id=st.session_state.editing_dp_id)
                 if duplicate:
-                    st.error(f"Identifier '{duplicate}' is already in use. Please choose a unique identifier.")
+                    st.error(f"Identifier '{duplicate}' is already in use.")
                 else:
-                    update_data_point(st.session_state.editing_dp_id, dp_to_edit['name'], identifiers, asset_types, data_type, range_min, range_max, string_options)
+                    update_data_point(st.session_state.editing_dp_id, dp_to_edit['name'], identifiers, asset_types, data_type, unit, range_min, range_max, string_options)
                     st.success("Data point updated successfully!")
                     st.session_state.editing_dp_id = None
                     st.rerun()
 
     elif st.session_state.show_add_form:
         st.subheader("Enter New Data Point Details")
-        
         data_type = st.selectbox("Data Type", ["float", "int", "boolean", "string"], key="add_data_type")
         
         with st.form("new_data_point_form"):
             dp_name = st.text_input("Data Point Name", placeholder="e.g., Main Power Consumption")
             dp_identifiers_str = st.text_input("Identifiers (comma-separated)", placeholder="e.g., id-001, main-power")
+            unit = st.text_input("Unit (e.g., C, V, kWh)", placeholder="Leave empty if None")
             
             range_min, range_max, string_options = None, None, None
             if data_type in ['float', 'int']:
                 col1, col2 = st.columns(2)
                 with col1:
-                    range_min = st.number_input("Range Min", value=0.0, format="%.2f")
+                    range_min = st.number_input("Range Min", value=0.0)
                 with col2:
-                    range_max = st.number_input("Range Max", value=100.0, format="%.2f")
+                    range_max = st.number_input("Range Max", value=100.0)
             elif data_type == 'string':
                 string_options = st.text_input("String Options (comma-separated)", placeholder="e.g., ON, OFF, STANDBY")
 
@@ -476,9 +444,9 @@ def data_points_page():
                 elif get_data_point_by_name(dp_name):
                     st.error(f"Data point with name '{dp_name}' already exists.")
                 elif duplicate_identifier:
-                    st.error(f"Identifier '{duplicate_identifier}' is already in use. Please choose a unique identifier.")
+                    st.error(f"Identifier '{duplicate_identifier}' is already in use.")
                 else:
-                    add_data_point(dp_name, identifiers, asset_types, data_type, range_min, range_max, string_options)
+                    add_data_point(dp_name, identifiers, asset_types, data_type, unit, range_min, range_max, string_options)
                     st.success(f"Successfully added data point: {dp_name}")
                     st.session_state.show_add_form = False
                     st.rerun()
@@ -489,26 +457,24 @@ def data_points_page():
             st.rerun()
 
     st.divider()
-
     st.subheader("Existing Data Points")
-    all_points, columns = get_all_data_points()
+    all_points = get_all_data_points()
 
     if not all_points:
         st.info("No data points found. Click 'Add New Data Point' to get started.")
     else:
-        header_cols = st.columns([3, 3, 3, 2, 2, 1])
-        headers = ["Data Point Name", "Identifiers", "Asset Types", "Data Type", "Range/Options", "Actions"]
+        header_cols = st.columns([3, 3, 2, 1, 2, 1])
+        headers = ["Data Point Name", "Identifiers", "Asset Types", "Unit", "Range/Options", "Actions"]
         for col, header in zip(header_cols, headers):
             col.markdown(f"**{header}**")
         
         for point in all_points:
-            row_cols = st.columns([3, 3, 3, 2, 2, 1])
+            row_cols = st.columns([3, 3, 2, 1, 2, 1])
             row_cols[0].write(point['name'])
             row_cols[1].write(format_list_for_display(point['identifiers']))
             row_cols[2].write(format_list_for_display(point['asset_types']))
-            row_cols[3].write(point['data_type'])
+            row_cols[3].write(point['unit'] or "N/A")
             
-            # FIX: Safely access sqlite3.Row object
             if point['data_type'] in ['float', 'int']:
                 range_str = f"{point['range_min'] if point['range_min'] is not None else 'N/A'} - {point['range_max'] if point['range_max'] is not None else 'N/A'}"
             elif point['data_type'] == 'string':
@@ -523,14 +489,14 @@ def data_points_page():
                     st.rerun()
             st.divider()
 
-
 def generator_page():
+    # This page remains unchanged
     st.title("Sample Data Generator")
     st.header("Generate Mock JSON Data")
 
     asset_type_options = get_all_asset_types()
     if not asset_type_options:
-        st.warning("No asset types found. Please add one on the 'Data points' page first.")
+        st.warning("Asset types could not be loaded from JSON file.")
         return
 
     with st.form("generator_form"):
@@ -562,7 +528,7 @@ def generator_page():
             matching_dps = get_data_points_by_asset_type(selected_asset_type)
             
             if not matching_dps:
-                st.warning(f"No data points found for asset type '{selected_asset_type}'. Please add them on the 'Data points' page.")
+                st.warning(f"No data points found for asset type '{selected_asset_type}'.")
             else:
                 start_datetime = datetime.datetime.combine(start_date, start_time)
                 end_datetime = datetime.datetime.combine(end_date, end_time)
@@ -571,32 +537,13 @@ def generator_page():
                 current_time = start_datetime
                 seq_id = 1
                 while current_time <= end_datetime:
-                    sii_data = {
-                        "tmsp": format_timestamp(current_time),
-                        "evc": 300,
-                        "tms": format_timestamp(current_time)
-                    }
+                    sii_data = { "tmsp": format_timestamp(current_time), "evc": 300, "tms": format_timestamp(current_time) }
                     for dp in matching_dps:
-                        # FIX: Safely parse JSON from sqlite3.Row
                         identifiers = json.loads(dp['identifiers'] or '[]')
                         key = (identifiers[0] if identifiers else dp['name'].replace(" ", "_").lower())
                         sii_data[key] = generate_mock_value(dp)
 
-                    single_packet_json = {
-                        "ver": "1.0",
-                        "pld": pld_id,
-                        "svc": "svc33338597",
-                        "aid": "A173378384",
-                        "eid": "2109801",
-                        "dvt": "jvt1443",
-                        "dvm": "JVT1443",
-                        "evt": "EV",
-                        "tms": format_timestamp(current_time),
-                        "evc": "300",
-                        "seqid": seq_id,
-                        "alt": None,
-                        "ext": [{"ver": "3.0", "sii": {"1": sii_data}}]
-                    }
+                    single_packet_json = { "ver": "1.0", "pld": pld_id, "svc": "svc33338597", "aid": "A173378384", "eid": "2109801", "dvt": "jvt1443", "dvm": "JVT1443", "evt": "EV", "tms": format_timestamp(current_time), "evc": "300", "seqid": seq_id, "alt": None, "ext": [{"ver": "3.0", "sii": {"1": sii_data}}] }
                     all_packets.append(single_packet_json)
                     
                     current_time += datetime.timedelta(minutes=frequency_mins)
@@ -609,20 +556,28 @@ def generator_page():
                     st.subheader("Generated JSON Preview (First Packet)")
                     st.json(all_packets[0])
                     json_string = json.dumps(all_packets, indent=4)
-                    st.download_button(
-                        label="Download JSON File",
-                        file_name=f"{pld_id}_{selected_asset_type}_data.json",
-                        mime="application/json",
-                        data=json_string,
-                    )
+                    st.download_button( label="Download JSON File", file_name=f"{pld_id}_{selected_asset_type}_data.json", mime="application/json", data=json_string, )
 
 def multi_json_generator_page():
     st.title("Multi JSON Generator")
     st.header("Generate Mixed-Source Mock Data")
 
+    # Use session state for the key choice
+    if 'key_choice' not in st.session_state:
+        st.session_state.key_choice = "Identifier"
+
+    st.radio(
+        "Select the key for parameters in the JSON packets:",
+        ("Identifier", "Data Point Name"),
+        key='key_choice',
+        horizontal=True
+    )
+    
+    st.divider()
+
     asset_type_options = get_all_asset_types()
     if not asset_type_options:
-        st.warning("No asset types found. Please add one on the 'Data points' page first.")
+        st.warning("Asset types could not be loaded from JSON file.")
         return
 
     if 'pld_inputs' not in st.session_state:
@@ -630,7 +585,6 @@ def multi_json_generator_page():
 
     with st.form("multi_generator_form"):
         st.subheader("Generation Parameters")
-        
         selected_asset_types = st.multiselect("Select Asset Types", asset_type_options)
         
         for asset_type in selected_asset_types:
@@ -641,11 +595,7 @@ def multi_json_generator_page():
             with st.container(border=True):
                 st.markdown(f"**PLDs for {asset_type}**")
                 for i in range(len(st.session_state.pld_inputs[asset_type])):
-                    st.session_state.pld_inputs[asset_type][i] = st.text_input(
-                        f"PLD ID {i+1}", 
-                        value=st.session_state.pld_inputs[asset_type][i], 
-                        key=f"pld_{asset_type}_{i}"
-                    )
+                    st.session_state.pld_inputs[asset_type][i] = st.text_input( f"PLD ID {i+1}", value=st.session_state.pld_inputs[asset_type][i], key=f"pld_{asset_type}_{i}" )
                 if st.form_submit_button(f"Add another PLD for {asset_type}", use_container_width=True):
                     st.session_state.pld_inputs[asset_type].append("")
                     st.rerun()
@@ -662,15 +612,12 @@ def multi_json_generator_page():
     if submitted:
         all_packets = []
         has_errors = False
-        
         start_datetime = datetime.datetime.combine(start_date, datetime.time.min)
         end_datetime = datetime.datetime.combine(end_date, datetime.time.max)
         total_seconds = (end_datetime - start_datetime).total_seconds()
 
         for asset_type, plds in st.session_state.pld_inputs.items():
-            if asset_type not in selected_asset_types:
-                continue
-
+            if asset_type not in selected_asset_types: continue
             cleaned_plds = [pld.strip() for pld in plds if pld.strip()]
             if not cleaned_plds:
                 st.error(f"Please provide at least one valid PLD ID for {asset_type}.")
@@ -690,44 +637,95 @@ def multi_json_generator_page():
                     
                     parameters = {}
                     for dp in matching_dps:
-                        # FIX: Safely parse JSON from sqlite3.Row
                         identifiers = json.loads(dp['identifiers'] or '[]')
-                        key = (identifiers[0] if identifiers else dp['name'].replace(" ", "_").lower())
+                        # UPDATED LOGIC HERE
+                        if st.session_state.key_choice == "Identifier":
+                            key = (identifiers[0] if identifiers else dp['name'].replace(" ", "_").lower())
+                        else: # Data Point Name
+                            key = dp['name'].replace(" ", "_").lower()
+                        
                         parameters[key] = generate_mock_value(dp)
 
-                    packet = {
-                        "pld": pld_id,
-                        "asset_type": asset_type,
-                        "timestamp": format_timestamp(random_timestamp),
-                        "parameters": parameters
-                    }
+                    packet = { "pld": pld_id, "asset_type": asset_type, "timestamp": format_timestamp(random_timestamp), "parameters": parameters }
                     all_packets.append(packet)
 
         if not has_errors and all_packets:
             random.shuffle(all_packets)
-            
             st.success(f"Successfully generated {len(all_packets)} mixed packets!")
             st.subheader("Generated JSON Preview (First Packet)")
             st.json(all_packets[0])
-            
             json_string = json.dumps(all_packets, indent=4)
-            st.download_button(
-                label="Download JSON File",
-                file_name="multi_asset_data.json",
-                mime="application/json",
-                data=json_string,
-            )
+            st.download_button( label="Download JSON File", file_name="multi_asset_data.json", mime="application/json", data=json_string, )
         elif not has_errors:
-            st.warning("No packets were generated. Check if the selected asset types have data points.")
+            st.warning("No packets were generated.")
 
+def bulk_datapoint_json_page():
+    """Page to generate a JSON file of data points for a specific asset type."""
+    st.title("Bulk Datapoint JSON Generator")
+    st.header("Export Data Points for an Asset Type")
+
+    asset_type_options = get_all_asset_types()
+    selected_asset_type = st.selectbox("Select an Asset Type to Export", asset_type_options)
+
+    if st.button("Generate JSON"):
+        if selected_asset_type:
+            data_points_from_db = get_data_points_by_asset_type(selected_asset_type)
+
+            if not data_points_from_db:
+                st.warning(f"No data points found in the database for '{selected_asset_type}'.")
+                return
+
+            output_json_list = []
+            for dp in data_points_from_db:
+                data_type_db = dp['data_type']
+                if data_type_db in ['float', 'int']:
+                    dataType_export = "1"
+                elif data_type_db == 'boolean':
+                    dataType_export = "3"
+                elif data_type_db == 'string':
+                    dataType_export = "4"
+                else:
+                    dataType_export = "1" 
+
+                asset_types_db = json.loads(dp['asset_types'] or '[]')
+                asset_types_export = [ASSET_TYPE_MAP.get(name, "") for name in asset_types_db]
+                asset_types_export = [item for item in asset_types_export if item] 
+
+                options_export = None
+                if dp['data_type'] == 'string' and dp['string_options']:
+                    options_export = [
+                        {"id": opt.strip(), "value": opt.strip()}
+                        for opt in dp['string_options'].split(',')
+                    ]
+
+                transformed_dp = {
+                    "name": dp['name'],
+                    "tag": json.loads(dp['identifiers'] or '[]'),
+                    "dataType": dataType_export,
+                    "unit": dp['unit'] or "None",
+                    "maintenanceMode": "0",
+                    "assetTypes": asset_types_export
+                }
+
+                if options_export:
+                    transformed_dp["options"] = options_export
+                
+                output_json_list.append(transformed_dp)
+            
+            if output_json_list:
+                st.success(f"Successfully generated JSON for {len(output_json_list)} data points.")
+                final_json_string = json.dumps(output_json_list, indent=2)
+                st.text_area("Generated JSON Preview", value=final_json_string, height=400)
+            else:
+                 st.warning(f"Could not generate JSON. No valid data points found for '{selected_asset_type}'.")
 
 def main():
     """This is the main function for the Streamlit app."""
     with st.sidebar:
         menu_selection = option_menu(
             "Main Menu", 
-            ["Home", 'Data points', 'Generator', 'Multi JSON Generator'], 
-            icons=['house', 'database-add', 'file-binary', 'files'], 
+            ["Home", 'Data points', 'Generator', 'Multi JSON Generator', 'Bulk Datapoint JSON'], 
+            icons=['house', 'database-add', 'file-binary', 'files', 'braces'], 
             menu_icon="cast", 
             default_index=1 
         )
@@ -740,9 +738,11 @@ def main():
         generator_page()
     elif menu_selection == "Multi JSON Generator":
         multi_json_generator_page()
+    elif menu_selection == "Bulk Datapoint JSON":
+        bulk_datapoint_json_page()
+
 
 if __name__ == '__main__':
-    # Initialize the local database on startup
     init_db()
     main()
 
